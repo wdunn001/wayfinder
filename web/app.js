@@ -109,10 +109,22 @@ map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left")
 window.nomadMap = map;
 
 map.on("load", () => {
+  // Alternative routes (grey, clickable) render beneath the selected route.
+  map.addSource("route-alt", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "route-alts", type: "line", source: "route-alt",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#8a98a6", "line-width": 4, "line-opacity": 0.7, "line-dasharray": [1.5, 1] } });
   map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "route-line", type: "line", source: "route",
     layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#1e88e5", "line-width": 5, "line-opacity": 0.85 } });
+  // Click a grey alternative to make it the active route.
+  map.on("click", "route-alts", (e) => {
+    const idx = e.features && e.features[0] && e.features[0].properties.idx;
+    if (idx !== undefined && currentRoutes[idx]) selectRoute(Number(idx));
+  });
+  map.on("mouseenter", "route-alts", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "route-alts", () => { map.getCanvas().style.cursor = ""; });
 
   // Hillshade relief from the terrarium DEM — hidden until 3D is on (no-op until the DEM is baked).
   map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain",
@@ -332,17 +344,23 @@ function syncMarkers() {
   });
 }
 
-/* ---------- routing (OSRM) ---------- */
+/* ---------- routing (OSRM) + live-traffic evaluation ---------- */
 const coordStr = () => stops.map((s) => `${s.lng},${s.lat}`).join(";");
+let currentRoutes = [];      // [{ geometry, distance, duration, _adjusted?, _factor? }]
+let selectedRouteIdx = 0;
+let optimizedOrder = false;
 
 document.getElementById("btn-route").onclick = async () => {
   clearError();
   try {
-    const r = await fetch(`${OSRM}/route/v1/driving/${coordStr()}?overview=full&geometries=geojson`);
+    // alternatives=true -> OSRM returns up to 2 extra candidate routes to rank.
+    const r = await fetch(`${OSRM}/route/v1/driving/${coordStr()}?overview=full&geometries=geojson&alternatives=true`);
     const j = await r.json();
     if (j.code !== "Ok" || !j.routes?.[0]) return showError(routeErr(j));
-    drawRoute(j.routes[0].geometry);
-    showSummary(j.routes[0].distance, j.routes[0].duration, stops.length);
+    currentRoutes = j.routes; selectedRouteIdx = 0; optimizedOrder = false;
+    renderRoutes(true);
+    showRouteSummary();
+    evaluateRoutesTraffic(); // async; re-renders the summary as results land
   } catch { showError("Routing engine (OSRM) unreachable."); }
 };
 
@@ -357,24 +375,109 @@ document.getElementById("btn-optimize").onclick = async () => {
       .sort((a, b) => a.pos - b.pos).map((x) => x.s);
     stops = ordered;
     render();
-    drawRoute(j.trips[0].geometry);
-    showSummary(j.trips[0].distance, j.trips[0].duration, stops.length, true);
+    currentRoutes = [j.trips[0]]; selectedRouteIdx = 0; optimizedOrder = true;
+    renderRoutes(true);
+    showRouteSummary();
+    evaluateRoutesTraffic();
   } catch { showError("Optimizer (OSRM trip) unreachable."); }
 };
 
-document.getElementById("btn-clear").onclick = () => { stops = []; clearRoute(); clearError(); hideSummary(); render(); };
+document.getElementById("btn-clear").onclick = () => { stops = []; currentRoutes = []; clearRoute(); clearError(); hideSummary(); render(); };
 
 function routeErr(j) {
   if (j.code === "NoRoute") return "No drivable route between these stops (check OSRM region coverage).";
   return `Could not compute a route (${j.code || "error"}).`;
 }
-function drawRoute(geometry) {
-  map.getSource("route").setData({ type: "Feature", geometry, properties: {} });
-  const b = new maplibregl.LngLatBounds();
-  geometry.coordinates.forEach((c) => b.extend(c));
-  if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 60, left: 390, right: 60 } });
+function selectRoute(idx) {
+  selectedRouteIdx = idx;
+  renderRoutes(false);
+  showRouteSummary();
 }
-function clearRoute() { map.getSource && map.getSource("route") && map.getSource("route").setData({ type: "FeatureCollection", features: [] }); }
+function renderRoutes(fit) {
+  const sel = currentRoutes[selectedRouteIdx];
+  if (!sel) return clearRoute();
+  map.getSource("route").setData({ type: "Feature", geometry: sel.geometry, properties: {} });
+  map.getSource("route-alt").setData({
+    type: "FeatureCollection",
+    features: currentRoutes.map((r, i) => ({ type: "Feature", geometry: r.geometry, properties: { idx: i } }))
+      .filter((f) => f.properties.idx !== selectedRouteIdx),
+  });
+  if (fit) {
+    const b = new maplibregl.LngLatBounds();
+    currentRoutes.forEach((r) => r.geometry.coordinates.forEach((c) => b.extend(c)));
+    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 60, bottom: 60, left: 390, right: 60 } });
+  }
+}
+function clearRoute() {
+  ["route", "route-alt"].forEach((s) => map.getSource && map.getSource(s) &&
+    map.getSource(s).setData({ type: "FeatureCollection", features: [] }));
+}
+
+/* Traffic evaluation: sample points along each route, ask TomTom (via the
+ * same-origin cached /traffic-flow proxy) for current vs free-flow speed, and
+ * scale each route's ETA by the average congestion. Silent no-op offline. */
+let trafficEvalUsable = true; // flips false on auth/network failure (no spam)
+function sampleCoords(geometry, n = 8) {
+  const cs = geometry.coordinates;
+  if (cs.length <= 2) return [cs[0]];
+  const out = [];
+  for (let i = 1; i <= n; i++) out.push(cs[Math.floor((cs.length - 1) * i / (n + 1))]);
+  return out;
+}
+async function flowFactor(route) {
+  const pts = sampleCoords(route.geometry);
+  const ratios = [];
+  for (const [lng, lat] of pts) {
+    try {
+      const r = await fetch(`/traffic-flow/${lat.toFixed(3)},${lng.toFixed(3)}`);
+      if (r.status === 401 || r.status === 403) { trafficEvalUsable = false; return null; }
+      if (!r.ok) continue;
+      const d = (await r.json()).flowSegmentData;
+      if (d && d.currentSpeed > 0 && d.freeFlowSpeed > 0)
+        ratios.push(Math.min(1.15, d.currentSpeed / d.freeFlowSpeed));
+    } catch { trafficEvalUsable = false; return null; }
+  }
+  if (!ratios.length) return null;
+  const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+  return Math.max(0.25, avg); // clamp: never claim >4x slowdown from sampling noise
+}
+async function evaluateRoutesTraffic() {
+  if (!trafficEvalUsable || !currentRoutes.length) return;
+  const mine = currentRoutes; // guard against a newer request replacing state
+  for (const r of mine) {
+    const f = await flowFactor(r);
+    if (mine !== currentRoutes) return; // stale
+    if (f !== null) { r._factor = f; r._adjusted = r.duration / f; }
+    showRouteSummary();
+  }
+}
+
+/* ---------- summary (base + traffic-adjusted + alternative suggestion) ---------- */
+function showRouteSummary() {
+  const el = document.getElementById("summary");
+  const sel = currentRoutes[selectedRouteIdx];
+  if (!sel) return hideSummary();
+  let html = `<div class="big">${fmtDist(sel.distance)} · ${fmtDur(sel._adjusted ?? sel.duration)}</div>`;
+  if (sel._adjusted) {
+    const delay = Math.round(sel._adjusted - sel.duration);
+    html += delay > 90
+      ? `<div class="traffic-delay bad">⚠ +${fmtDur(delay)} in current traffic (free-flow ${fmtDur(sel.duration)})</div>`
+      : `<div class="traffic-delay ok">✓ traffic is light on this route</div>`;
+  }
+  html += `<div class="muted">${stops.length} stops${optimizedOrder ? " · optimized order" : ""} · driving${currentRoutes.length > 1 ? ` · ${currentRoutes.length} routes` : ""}</div>`;
+  // Suggest the fastest-right-now alternative when it beats the selection by >1 min.
+  const best = currentRoutes.reduce((b, r, i) =>
+    (r._adjusted ?? r.duration) < ((currentRoutes[b]._adjusted ?? currentRoutes[b].duration)) ? i : b, selectedRouteIdx);
+  if (best !== selectedRouteIdx) {
+    const saves = (currentRoutes[selectedRouteIdx]._adjusted ?? currentRoutes[selectedRouteIdx].duration)
+                - (currentRoutes[best]._adjusted ?? currentRoutes[best].duration);
+    if (saves > 60) html += `<button class="alt-suggest" data-idx="${best}">🚦 Alternative saves ${fmtDur(Math.round(saves))} — switch</button>`;
+  }
+  el.innerHTML = html;
+  const btn = el.querySelector(".alt-suggest");
+  if (btn) btn.onclick = () => selectRoute(Number(btn.dataset.idx));
+  el.classList.remove("hidden");
+}
 
 /* ---------- batch import ---------- */
 document.getElementById("btn-batch").onclick = async () => {
@@ -400,13 +503,7 @@ document.getElementById("btn-batch").onclick = async () => {
   }
 };
 
-/* ---------- summary / errors ---------- */
-function showSummary(dist, dur, n, optimized) {
-  const el = document.getElementById("summary");
-  el.innerHTML = `<div class="big">${fmtDist(dist)} · ${fmtDur(dur)}</div>
-    <div class="muted">${n} stops${optimized ? " · optimized order" : ""} · driving</div>`;
-  el.classList.remove("hidden");
-}
+/* ---------- errors / misc ---------- */
 function hideSummary() { document.getElementById("summary").classList.add("hidden"); }
 function showError(msg) { const e = document.getElementById("error"); e.textContent = msg; e.classList.remove("hidden"); }
 function clearError() { document.getElementById("error").classList.add("hidden"); }

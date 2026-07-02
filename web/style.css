@@ -74,6 +74,13 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 
 .summary { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 13px; }
 .summary .big { font-size: 18px; font-weight: 700; }
+.traffic-delay { font-size: 12px; margin-top: 3px; }
+.traffic-delay.bad { color: #ffb74d; }
+.traffic-delay.ok { color: #81c784; }
+.alt-suggest { display: block; width: 100%; margin-top: 8px; padding: 8px; border-radius: 8px;
+  border: 1px solid var(--accent-2); background: rgba(30,136,229,.18); color: #90caf9;
+  cursor: pointer; font-size: 12px; font-weight: 600; }
+.alt-suggest:hover { background: var(--accent); color: #fff; }
 .muted { color: var(--muted); font-size: 12px; }
 .error { background: rgba(198,40,40,.15); border: 1px solid var(--danger); color: #ffb4b4;
   border-radius: 8px; padding: 9px; font-size: 12px; }
