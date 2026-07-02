@@ -64,6 +64,61 @@ function fmtDur(s) {
   const h = Math.floor(m / 60), mm = m % 60;
   return mm ? `${h}h ${mm}m` : `${h}h`;
 }
+/* ---------- dual geocoder: Nominatim+TIGER primary, Photon fallback ----------
+ * Nominatim (self-hosted US + TIGER) resolves real street addresses with house
+ * numbers; Photon covers place names and acts as the fallback. If Nominatim is
+ * down/not-yet-imported the chain degrades automatically and retries every 5
+ * minutes — the cutover to TIGER happens by itself the moment it serves. */
+let nominatimUp = true;
+let nominatimRetryAt = 0;
+function nomToStop(r) {
+  const a = r.address || {};
+  const main = [a.house_number, a.road].filter(Boolean).join(" ")
+    || r.name || (r.display_name || "").split(",")[0] || "Location";
+  const sub = [a.city || a.town || a.village || a.hamlet, a.state, a.postcode]
+    .filter(Boolean).join(", ");
+  return { lat: +r.lat, lng: +r.lon, label: main, sub };
+}
+async function geocodeForward(q, limit) {
+  const now = Date.now();
+  if (nominatimUp || now > nominatimRetryAt) {
+    try {
+      const r = await fetch(`/nominatim/search?q=${encodeURIComponent(q)}&format=jsonv2&addressdetails=1&limit=${limit}&countrycodes=us`,
+        { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined });
+      if (r.ok) {
+        const j = await r.json();
+        nominatimUp = true;
+        if (Array.isArray(j) && j.length) return j.map(nomToStop);
+        // empty result: fall through — Photon may still match fuzzy place names
+      } else { nominatimUp = false; nominatimRetryAt = now + 300000; }
+    } catch { nominatimUp = false; nominatimRetryAt = now + 300000; }
+  }
+  const c = map.getCenter();
+  const r2 = await fetch(`${GEOCODE}/api?q=${encodeURIComponent(q)}&limit=${limit}&lang=en&lat=${c.lat}&lon=${c.lng}`);
+  const j2 = await r2.json();
+  return (j2.features || []).map(featureToStop);
+}
+async function geocodeReverse(lat, lng) {
+  const now = Date.now();
+  if (nominatimUp || now > nominatimRetryAt) {
+    try {
+      const r = await fetch(`/nominatim/reverse?lat=${lat}&lon=${lng}&format=jsonv2&addressdetails=1`,
+        { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined });
+      if (r.ok) {
+        const j = await r.json();
+        nominatimUp = true;
+        if (j && j.lat) return nomToStop(j);
+      } else { nominatimUp = false; nominatimRetryAt = now + 300000; }
+    } catch { nominatimUp = false; nominatimRetryAt = now + 300000; }
+  }
+  try {
+    const r2 = await fetch(`${GEOCODE}/reverse?lat=${lat}&lon=${lng}&lang=en`);
+    const j2 = await r2.json();
+    if (j2.features && j2.features[0]) return featureToStop(j2.features[0]);
+  } catch { /* keep coordinates label */ }
+  return null;
+}
+
 /* Photon GeoJSON feature -> { lat, lng, label } */
 function featureToStop(f) {
   const [lng, lat] = f.geometry.coordinates;
@@ -261,12 +316,10 @@ map.on("click", async (e) => {
   const stop = { localId: newId(), lat, lng, label: `Pin ${stops.length + 1}` };
   stops.push(stop);
   render();
-  // reverse-geocode for a friendlier label (best-effort)
+  // reverse-geocode for a friendlier label (best-effort; TIGER-primary chain)
   try {
-    const r = await fetch(`${GEOCODE}/reverse?lat=${lat}&lon=${lng}&lang=en`);
-    const j = await r.json();
-    if (j.features && j.features[0]) {
-      const s = featureToStop(j.features[0]);
+    const s = await geocodeReverse(lat, lng);
+    if (s) {
       const cur = stops.find((x) => x.localId === stop.localId);
       if (cur) { cur.label = s.label; render(); }
     }
@@ -307,13 +360,9 @@ document.addEventListener("click", (e) => {
 
 async function doSearch(q) {
   try {
-    const c = map.getCenter();
-    const url = `${GEOCODE}/api?q=${encodeURIComponent(q)}&limit=8&lang=en&lat=${c.lat}&lon=${c.lng}`;
-    const r = await fetch(url);
-    const j = await r.json();
-    lastResults = (j.features || []).map(featureToStop);
+    lastResults = await geocodeForward(q, 8);
     renderResults();
-  } catch { showError("Geocoder (Photon) unreachable."); }
+  } catch { showError("Geocoders unreachable (Nominatim + Photon both failed)."); }
 }
 function renderResults() {
   if (!lastResults.length) { hideResults(); return; }
@@ -535,9 +584,8 @@ document.getElementById("btn-batch").onclick = async () => {
   for (let i = 0; i < addresses.length; i++) {
     status.textContent = `Geocoding ${i + 1}/${addresses.length}…`;
     try {
-      const r = await fetch(`${GEOCODE}/api?q=${encodeURIComponent(addresses[i])}&limit=1&lang=en`);
-      const j = await r.json();
-      if (j.features?.[0]) { const s = featureToStop(j.features[0]); stops.push({ localId: newId(), lat: s.lat, lng: s.lng, label: s.label }); added++; }
+      const res = await geocodeForward(addresses[i], 1);
+      if (res[0]) { stops.push({ localId: newId(), lat: res[0].lat, lng: res[0].lng, label: res[0].label }); added++; }
       else failed++;
     } catch { failed++; }
   }
