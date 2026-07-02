@@ -5,22 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Wayfinder — Maps &amp; Directions</title>
   <link rel="stylesheet" href="vendor/maplibre-gl.css" />
+  <link rel="stylesheet" href="vendor/terradraw-control.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Floating draw toolbar (fleet-map style) — visible on the Layers tab. -->
-  <div id="draw-toolbar" class="draw-toolbar hidden">
-    <button class="dtool active" data-mode="pointer" title="Pan / select">✋</button>
-    <span class="dtool-sep"></span>
-    <button class="dtool" data-mode="polygon" title="Draw polygon">⬠</button>
-    <button class="dtool" data-mode="rectangle" title="Draw rectangle">▭</button>
-    <button class="dtool" data-mode="linestring" title="Draw line / corridor">╱</button>
-    <button class="dtool" data-mode="point" title="Drop point">•</button>
-    <span class="dtool-sep"></span>
-    <button class="dtool" data-mode="delete" title="Click a shape to delete">🗑</button>
-  </div>
+  <!-- Drawing toolbar is the @watergis/maplibre-gl-terradraw control (top-left
+       on the map): every Terra Draw mode + select/edit + delete + download +
+       distance/area measurement. Mounted from geofence.js. -->
 
   <div id="panel" class="panel">
     <header class="panel-head">
@@ -70,8 +63,9 @@
 
     <!-- ===================== LAYERS TAB ===================== -->
     <section id="tab-layers" class="tabpane hidden">
-      <div class="hint" id="layers-hint">Pick a tool above, then draw on the map. Shapes save to the
-        <strong>active</strong> layer automatically.</div>
+      <div class="hint" id="layers-hint">Pick a tool from the map toolbar (top-left), then draw.
+        Shapes save to the <strong>active</strong> layer automatically; use the select tool to
+        edit or move shapes, and the ruler modes for distance/area.</div>
 
       <div class="layer-actions">
         <button id="btn-new-layer" class="primary">+ New layer</button>
