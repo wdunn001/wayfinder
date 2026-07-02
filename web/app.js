@@ -137,7 +137,10 @@ map.on("load", () => {
     type: "fill-extrusion",
     source: "mz-vector",
     "source-layer": "buildings",
-    minzoom: 13,
+    // The planet tileset carries `buildings` from z11 (see /martin/planet
+    // tilejson) — gate the extrusions to match so 3D shows at city zooms,
+    // not only when zoomed all the way in.
+    minzoom: 11,
     layout: { visibility: "none" },
     // Extrude every building footprint; untagged ones (most residential) get a
     // sensible default height so they still pop up in 3D instead of being filtered out.
