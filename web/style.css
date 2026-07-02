@@ -1,0 +1,128 @@
+:root {
+  --bg: #1b1f24;
+  --panel: #232a31;
+  --panel-2: #2b333c;
+  --line: #38424d;
+  --text: #e7edf3;
+  --muted: #9aa7b4;
+  --accent: #1565c0;
+  --accent-2: #1e88e5;
+  --danger: #c62828;
+  --ok: #2e7d32;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); }
+#map { position: absolute; inset: 0; background: #0e1216; }
+
+.panel {
+  position: absolute; top: 12px; left: 12px; z-index: 5;
+  width: 360px; max-width: calc(100vw - 24px); max-height: calc(100vh - 24px);
+  display: flex; flex-direction: column; gap: 10px; overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+}
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.panel-head h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
+.basemap { display: flex; gap: 4px; }
+.base-btn { font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--muted); cursor: pointer; }
+.base-btn.active { color: #fff; border-color: var(--accent-2); background: var(--accent); }
+/* Independent toggle (not part of the exclusive basemap group) */
+.tool-btn { font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--muted); cursor: pointer; }
+.tool-btn.active { color: #fff; border-color: var(--accent-2); background: var(--accent); }
+
+.search { position: relative; }
+#search-input { width: 100%; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); font-size: 14px; }
+#search-input:focus { outline: none; border-color: var(--accent-2); }
+/* Rendered as a fixed overlay (positioned in JS under the input) so it escapes the
+   panel's `overflow:auto` clipping context instead of growing a scrollbar on the panel. */
+.search-results { list-style: none; margin: 0; padding: 4px; position: fixed;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; z-index: 1000;
+  max-height: 50vh; overflow-y: auto; box-shadow: 0 10px 28px rgba(0,0,0,.5); }
+.search-results li { padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.search-results li:hover, .search-results li.active { background: var(--accent); color: #fff; }
+.search-results .sub { display: block; font-size: 11px; color: var(--muted); }
+.search-results li:hover .sub, .search-results li.active .sub { color: #dce8f6; }
+
+.hint { font-size: 12px; color: var(--muted); }
+.stops { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.stops li { display: flex; align-items: center; gap: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.stops .idx { width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #fff; }
+.stops .lbl { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stops .ctl { display: flex; gap: 2px; }
+.stops button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px;
+  padding: 2px 5px; border-radius: 4px; }
+.stops button:hover { color: #fff; background: var(--line); }
+
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions button { flex: 1; min-width: 90px; padding: 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }
+.actions button:disabled { opacity: .45; cursor: not-allowed; }
+.actions .primary { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+.actions .ghost { background: transparent; }
+
+.batch summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.batch textarea { width: 100%; margin-top: 8px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 12px; resize: vertical; }
+.batch-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.batch-actions button { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+  background: transparent; color: var(--text); cursor: pointer; font-size: 12px; }
+
+.summary { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 13px; }
+.summary .big { font-size: 18px; font-weight: 700; }
+.muted { color: var(--muted); font-size: 12px; }
+.error { background: rgba(198,40,40,.15); border: 1px solid var(--danger); color: #ffb4b4;
+  border-radius: 8px; padding: 9px; font-size: 12px; }
+.hidden { display: none; }
+
+.maplibregl-popup-content { background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 12px; }
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--panel-2); }
+
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab { flex: 1; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
+  cursor: pointer; font-size: 13px; padding: 8px 6px; }
+.tab:hover { color: var(--text); }
+.tab.active { color: #fff; border-bottom-color: var(--accent-2); }
+.tabpane { display: flex; flex-direction: column; gap: 10px; }
+
+/* ---------- floating draw toolbar (fleet-map style) ---------- */
+.draw-toolbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
+  display: flex; align-items: center; gap: 2px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.45); }
+.dtool { width: 34px; height: 34px; border-radius: 7px; border: 1px solid transparent;
+  background: var(--panel-2); color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1;
+  display: grid; place-items: center; }
+.dtool:hover { color: #fff; }
+.dtool.active { color: #fff; background: var(--accent); border-color: var(--accent-2); }
+.dtool-sep { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
+
+/* ---------- geofence layers panel ---------- */
+.layer-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.layer-actions button { flex: 1; min-width: 84px; padding: 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 12px; }
+.layer-actions .primary { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+.layer-actions .ghost { background: transparent; }
+
+.layers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.layer-row { display: flex; align-items: center; gap: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px; }
+.layer-row.active { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2) inset; }
+.layer-row .swatch { width: 16px; height: 16px; flex: none; border-radius: 4px; border: 1px solid rgba(255,255,255,.35);
+  cursor: pointer; padding: 0; }
+.layer-row .vis { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px; }
+.layer-row .vis.on { color: var(--accent-2); }
+.layer-row .name { flex: 1; background: none; border: none; color: var(--text); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; }
+.layer-row .name:focus { outline: 1px solid var(--accent-2); border-radius: 4px; }
+.layer-row .count { font-size: 11px; color: var(--muted); }
+.layer-row .del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 4px; }
+.layer-row .del:hover { color: #ffb4b4; }
+.layer-row .use { background: none; border: 1px solid var(--line); color: var(--muted); cursor: pointer;
+  font-size: 11px; border-radius: 6px; padding: 2px 7px; }
+.layer-row.active .use { color: #fff; background: var(--accent); border-color: var(--accent-2); }

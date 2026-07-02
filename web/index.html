@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Maps &amp; Directions</title>
+  <link rel="stylesheet" href="vendor/maplibre-gl.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="map"></div>
+
+  <!-- Floating draw toolbar (fleet-map style) — visible on the Layers tab. -->
+  <div id="draw-toolbar" class="draw-toolbar hidden">
+    <button class="dtool active" data-mode="pointer" title="Pan / select">✋</button>
+    <span class="dtool-sep"></span>
+    <button class="dtool" data-mode="polygon" title="Draw polygon">⬠</button>
+    <button class="dtool" data-mode="rectangle" title="Draw rectangle">▭</button>
+    <button class="dtool" data-mode="linestring" title="Draw line / corridor">╱</button>
+    <button class="dtool" data-mode="point" title="Drop point">•</button>
+    <span class="dtool-sep"></span>
+    <button class="dtool" data-mode="delete" title="Click a shape to delete">🗑</button>
+  </div>
+
+  <div id="panel" class="panel">
+    <header class="panel-head">
+      <h1>Maps &amp; Directions</h1>
+      <div class="basemap">
+        <button data-base="street" class="base-btn active">Street</button>
+        <button data-base="satellite" class="base-btn">Satellite</button>
+        <button id="btn-3d" class="tool-btn" title="Toggle 3D buildings &amp; tilt">3D</button>
+      </div>
+    </header>
+
+    <!-- Tab strip: route planner vs geofence layers -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="directions">Directions</button>
+      <button class="tab" data-tab="layers">Geofence layers</button>
+    </nav>
+
+    <!-- ===================== DIRECTIONS TAB ===================== -->
+    <section id="tab-directions" class="tabpane">
+      <div class="search">
+        <input id="search-input" type="text" placeholder="Search address or place…" autocomplete="off" />
+        <ul id="search-results" class="search-results hidden"></ul>
+      </div>
+
+      <div class="hint">Search a place or <strong>click the map</strong> to add a stop.</div>
+
+      <ol id="stops" class="stops"></ol>
+
+      <div class="actions">
+        <button id="btn-route" class="primary" disabled>Directions</button>
+        <button id="btn-optimize" disabled title="Reorder stops into the shortest drive">Optimize order</button>
+        <button id="btn-clear" class="ghost" disabled>Clear</button>
+      </div>
+
+      <details class="batch">
+        <summary>Batch import addresses</summary>
+        <textarea id="batch-input" rows="5" placeholder="One address per line, or a JSON array…"></textarea>
+        <div class="batch-actions">
+          <button id="btn-batch" class="ghost">Geocode &amp; add</button>
+          <span id="batch-status" class="muted"></span>
+        </div>
+      </details>
+
+      <div id="summary" class="summary hidden"></div>
+      <div id="error" class="error hidden"></div>
+    </section>
+
+    <!-- ===================== LAYERS TAB ===================== -->
+    <section id="tab-layers" class="tabpane hidden">
+      <div class="hint" id="layers-hint">Pick a tool above, then draw on the map. Shapes save to the
+        <strong>active</strong> layer automatically.</div>
+
+      <div class="layer-actions">
+        <button id="btn-new-layer" class="primary">+ New layer</button>
+        <button id="btn-import-layer" class="ghost" title="Import GeoJSON into a new layer">Import</button>
+        <button id="btn-export-layer" class="ghost" title="Export the active layer as GeoJSON">Export</button>
+        <input id="import-file" type="file" accept=".json,.geojson,application/json" class="hidden" />
+      </div>
+
+      <ul id="layers" class="layers"></ul>
+    </section>
+  </div>
+
+  <!-- MapLibre first (exposes window.maplibregl), then the classic route planner. -->
+  <script src="vendor/maplibre-gl.js"></script>
+  <script src="app.js"></script>
+  <!-- Geofence drawing is an ES module (Terra Draw is ESM). It reads window.nomadMap. -->
+  <script type="module" src="geofence.js"></script>
+</body>
+</html>
