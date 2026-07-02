@@ -14,8 +14,8 @@ import {
   TerraDrawLineStringMode,
   TerraDrawPointMode,
   TerraDrawRenderMode,
+  TerraDrawMapLibreGLAdapter,
 } from "./vendor/terra-draw.mjs";
-import { TerraDrawMapLibreGLAdapter } from "./vendor/terra-draw-adapter.mjs";
 
 const map = window.nomadMap;
 const LS_KEY = "nomad-geofence-layers-v1";
