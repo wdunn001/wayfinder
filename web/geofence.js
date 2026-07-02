@@ -234,5 +234,11 @@ function boot() {
   initLayerActions();
   renderLayersUI();
 }
-if (map.isStyleLoaded()) boot();
-else map.once("load", boot);
+// NOTE: map.loaded(), not map.isStyleLoaded() — with an inline style object
+// isStyleLoaded() can return true before the map's real "load" event, and the
+// measure control's onAdd (which addSource's) then throws "Style is not done
+// loading". map.loaded() is only true once the map is genuinely ready.
+let booted = false;
+function start() { if (booted) return; booted = true; boot(); }
+if (map.loaded()) start();
+else map.once("load", start);
