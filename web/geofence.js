@@ -140,6 +140,14 @@ function initTabs() {
       const which = t.dataset.tab;
       document.getElementById("tab-directions").classList.toggle("hidden", which !== "directions");
       document.getElementById("tab-layers").classList.toggle("hidden", which !== "layers");
+      // The Terra Draw control (top-right) belongs to the Layers tab only —
+      // CSS hides it via this body class, and leaving the tab disarms any
+      // active draw mode so hidden tools can't keep capturing map clicks.
+      document.body.classList.toggle("layers-tab", which === "layers");
+      if (which !== "layers") {
+        try { td && td.setMode("render"); } catch { /* not started yet */ }
+        window.nomadDrawActive = false;
+      }
     }));
 }
 

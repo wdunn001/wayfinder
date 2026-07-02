@@ -127,8 +127,10 @@ map.on("load", () => {
   map.on("mouseleave", "route-alts", () => { map.getCanvas().style.cursor = ""; });
 
   // Hillshade relief from the terrarium DEM — hidden until 3D is on (no-op until the DEM is baked).
+  // NOTE: the baked terrarium DEM is a z0-9 world overview (higher zooms 404),
+  // so relief is coarse — exaggerate harder so it actually reads on screen.
   map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain",
-    layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.45 } }, "route-line");
+    layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.75 } }, "route-line");
 
   // 3D building extrusions from Martin's planet `buildings` layer — hidden until 3D is on.
   // Inserted beneath route-line so routes stay visible over the buildings.
@@ -215,10 +217,27 @@ async function setTraffic(on) {
 }
 btnTraffic && btnTraffic.addEventListener("click", () => setTraffic(!isTraffic));
 
+/* Adding stops by clicking is an ARMED action (too easy to fat-finger points
+ * otherwise): press "+ Add stop on map", click locations, Esc/press again to done. */
+let addStopArmed = false;
+const btnAddStop = document.getElementById("btn-add-stop");
+function setAddStop(on) {
+  addStopArmed = on;
+  if (btnAddStop) {
+    btnAddStop.classList.toggle("active", on);
+    btnAddStop.textContent = on ? "Click the map to add stops — press to finish" : "+ Add stop on map";
+  }
+  map.getCanvas().style.cursor = on ? "crosshair" : "";
+}
+btnAddStop && btnAddStop.addEventListener("click", () => setAddStop(!addStopArmed));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") setAddStop(false); });
+
 map.on("click", async (e) => {
   // When the geofence tools are active (drawing/deleting), map clicks belong to
   // the draw layer — don't also drop a route stop.
   if (window.nomadDrawActive) return;
+  // Stops are only added while the Add-stop button is armed.
+  if (!addStopArmed) return;
   const { lng, lat } = e.lngLat;
   const stop = { localId: newId(), lat, lng, label: `Pin ${stops.length + 1}` };
   stops.push(stop);

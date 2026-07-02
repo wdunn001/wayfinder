@@ -139,3 +139,13 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
    equal specificity they were overriding it (layers pane + toolbar rendered
    inside the Directions tab, and tab switches looked dead). */
 .tabpane.hidden, .draw-toolbar.hidden { display: none; }
+
+/* Terra Draw control lives top-right and only belongs to the Geofence layers
+   tab (geofence.js toggles body.layers-tab). Nav/scale are bottom corners, so
+   hiding the whole top-right stack is safe. */
+body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
+
+/* Armed "add stop by clicking" button (Directions tab) */
+.add-stop { padding: 9px; border-radius: 8px; border: 1px dashed var(--line);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }
+.add-stop.active { border-style: solid; border-color: var(--accent-2); background: var(--accent); color: #fff; font-weight: 600; }
