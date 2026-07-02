@@ -35,12 +35,21 @@ function inferMode(geom) {
   if (geom.type === "LineString") return "linestring";
   return "polygon"; // Polygon / MultiPolygon (rect/circle/etc. all persist as polygons)
 }
+const isUuid = (s) => typeof s === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+const newUuid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0; return (c === "x" ? r : (r & 3) | 8).toString(16);
+    }));
 function toTdFeature(f, layerId) {
+  // Terra Draw v1 validates feature ids as UUID4 — shapes saved by the old
+  // hand-rolled toolbar carry short random ids, which made restore throw.
+  // Re-id those (persist() writes the new uuid back via String(f.id)).
+  const id = isUuid(f.properties?._uid) ? f.properties._uid : newUuid();
   return {
-    id: f.properties?._uid || uid(),
+    id,
     type: "Feature",
     geometry: f.geometry,
-    properties: { ...(f.properties || {}), mode: f.properties?.mode || inferMode(f.geometry), layerId },
+    properties: { ...(f.properties || {}), _uid: id, mode: f.properties?.mode || inferMode(f.geometry), layerId },
   };
 }
 
@@ -102,12 +111,20 @@ function initDrawEvents() {
     const m = (e && (e.mode || e.detail?.mode)) || (td && td.getMode()) || "render";
     window.nomadDrawActive = m !== "render";
   });
-  // Restore saved features into the store (visible layers only).
+  // Restore saved features into the store (visible layers only). Per-feature
+  // fallback: one bad saved shape must never take out the whole restore.
   suppressPersist = true;
   try {
     for (const L of layers) {
       if (!L.visible || !L.features.length) continue;
-      td.addFeatures(L.features.map((f) => toTdFeature(f, L.id)));
+      const feats = L.features.map((f) => toTdFeature(f, L.id));
+      try { td.addFeatures(feats); }
+      catch {
+        for (const f of feats) {
+          try { td.addFeatures([f]); }
+          catch (e) { console.warn("geofence: skipped unrestorable shape", f.id, e && e.message); }
+        }
+      }
     }
   } catch (e) { console.error("geofence restore failed", e); }
   finally { suppressPersist = false; }

@@ -93,9 +93,14 @@ const map = new maplibregl.Map({
       // height/min_height, used by the 3D fill-extrusion layer below.
       "mz-vector": { type: "vector", tiles: [TILE.vector], minzoom: 0, maxzoom: 15,
         attribution: "&copy; OpenStreetMap, Protomaps (self-hosted)" },
-      // Terrarium-encoded DEM for 3D terrain + hillshade (served by Martin once baked).
+      // Terrarium-encoded DEM (z0-9 overview bake). Two identical sources on
+      // purpose: MapLibre explicitly warns against sharing one raster-dem
+      // between setTerrain and a hillshade layer (duplicated request/cancel
+      // churn + reduced rendering quality).
       "mz-terrain": { type: "raster-dem", tiles: [TILE.terrain], tileSize: 256, encoding: "terrarium",
         maxzoom: 9, attribution: "Elevation &copy; Mapzen / AWS Terrain Tiles" },
+      "mz-terrain-hs": { type: "raster-dem", tiles: [TILE.terrain], tileSize: 256, encoding: "terrarium",
+        maxzoom: 9 },
     },
     layers: [{ id: "base", type: "raster", source: "street" }],
   },
@@ -107,6 +112,15 @@ map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left")
 
 // Exposed for the geofence-layers ES module (geofence.js), which owns drawing + persistence.
 window.nomadMap = map;
+
+// Without an error listener MapLibre console.errors EVERY internal error event —
+// including the benign AbortErrors from tiles cancelled mid pan/zoom, which
+// floods the console with bare "Error" lines. Swallow aborts, surface the rest.
+map.on("error", (e) => {
+  const msg = (e && e.error && e.error.message) || "";
+  if (!msg || /abort/i.test(msg) || /signal is aborted/i.test(msg)) return;
+  console.warn("[map]", msg);
+});
 
 map.on("load", () => {
   // Alternative routes (grey, clickable) render beneath the selected route.
@@ -129,7 +143,8 @@ map.on("load", () => {
   // Hillshade relief from the terrarium DEM — hidden until 3D is on (no-op until the DEM is baked).
   // NOTE: the baked terrarium DEM is a z0-9 world overview (higher zooms 404),
   // so relief is coarse — exaggerate harder so it actually reads on screen.
-  map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain",
+  // Uses its own DEM source (mz-terrain-hs) — never share with setTerrain.
+  map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain-hs",
     layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.75 } }, "route-line");
 
   // 3D building extrusions from Martin's planet `buildings` layer — hidden until 3D is on.
