@@ -46,7 +46,8 @@ function toTdFeature(f, layerId) {
 
 /* ---------- the control (all modes + measurement) ---------- */
 const control = new MaplibreMeasureControl({ open: true }); // no `modes` -> every mode the plugin ships
-map.addControl(control, "top-right"); // top-left is occupied by the Wayfinder panel
+// NOTE: addControl happens in boot() — the measure control adds map sources in
+// onAdd, which throws "Style is not done loading" if run before the style loads.
 let td = null;              // TerraDraw instance
 let suppressPersist = false; // guard while we add/remove features programmatically
 
@@ -227,6 +228,7 @@ function fitTo(feats) {
 
 /* ---------- boot ---------- */
 function boot() {
+  map.addControl(control, "top-right"); // top-left is occupied by the Wayfinder panel
   initDrawEvents();
   initTabs();
   initLayerActions();
