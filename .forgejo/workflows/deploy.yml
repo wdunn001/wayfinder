@@ -15,6 +15,8 @@ jobs:
       REPO_TOKEN: ${{ github.token }}
       FORGEJO_REGISTRY_USER: ${{ secrets.FORGEJO_REGISTRY_USER }}
       FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+      # TomTom key for the live-traffic proxy (optional; toggle errors politely without it)
+      TOMTOM_API_KEY: ${{ secrets.TOMTOM_API_KEY }}
     steps:
       - name: Build, push & deploy Wayfinder
         run: |
@@ -31,5 +33,6 @@ jobs:
           docker push "$IMG"
           # Refresh the Nomad dashboard tile container (same name + port 8442).
           docker rm -f nomad_custom_maps_directions 2>/dev/null || true
-          docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 "$IMG"
+          docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 \
+            -e TOMTOM_API_KEY="${TOMTOM_API_KEY:-}" "$IMG"
           docker ps --filter name=nomad_custom_maps_directions --format 'deployed: {{.Status}} {{.Ports}}'

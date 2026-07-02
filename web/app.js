@@ -155,6 +155,51 @@ function set3D(on) {
 }
 btn3d && btn3d.addEventListener("click", () => set3D(!is3D));
 
+/* ---------- live traffic overlay (TomTom flow tiles via same-origin /traffic proxy) ---------- */
+let isTraffic = false, trafficProbed = false;
+const btnTraffic = document.getElementById("btn-traffic");
+function ensureTrafficLayer() {
+  if (map.getSource("traffic")) return;
+  map.addSource("traffic", {
+    type: "raster", tiles: ["/traffic/{z}/{x}/{y}.png"], tileSize: 256, maxzoom: 22,
+    attribution: "Traffic &copy; TomTom",
+  });
+  // Under the route line (and 3D buildings) so planning stays readable.
+  const below = map.getLayer("buildings-3d") ? "buildings-3d"
+    : (map.getLayer("route-line") ? "route-line" : undefined);
+  map.addLayer({ id: "traffic", type: "raster", source: "traffic",
+    paint: { "raster-opacity": 0.85 } }, below);
+}
+async function setTraffic(on) {
+  // First enable: probe one tile so a missing server key (or an offline box)
+  // surfaces as a message instead of a silently empty overlay.
+  if (on && !trafficProbed) {
+    try {
+      const c = map.getCenter(), z = Math.max(4, Math.min(12, Math.round(map.getZoom())));
+      const n = 2 ** z;
+      const x = Math.floor(((c.lng + 180) / 360) * n);
+      const y = Math.floor(((1 - Math.log(Math.tan((c.lat * Math.PI) / 180) + 1 / Math.cos((c.lat * Math.PI) / 180)) / Math.PI) / 2) * n);
+      const r = await fetch(`/traffic/${z}/${x}/${y}.png`, { cache: "no-store" });
+      if (!r.ok) {
+        showError(r.status === 403
+          ? "Traffic needs a TomTom API key on the server (set TOMTOM_API_KEY on the container)."
+          : `Traffic tiles unavailable (HTTP ${r.status}) — is the box online?`);
+        return;
+      }
+      trafficProbed = true;
+      clearError();
+    } catch {
+      showError("Traffic tiles unreachable — the traffic overlay needs internet access.");
+      return;
+    }
+  }
+  isTraffic = on;
+  btnTraffic && btnTraffic.classList.toggle("active", on);
+  ensureTrafficLayer();
+  map.setLayoutProperty("traffic", "visibility", on ? "visible" : "none");
+}
+btnTraffic && btnTraffic.addEventListener("click", () => setTraffic(!isTraffic));
+
 map.on("click", async (e) => {
   // When the geofence tools are active (drawing/deleting), map clicks belong to
   // the draw layer — don't also drop a route stop.

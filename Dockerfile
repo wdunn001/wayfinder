@@ -46,7 +46,12 @@ COPY --from=bundler /b/terra-draw.bundle.js /usr/share/nginx/html/vendor/terra-d
 COPY --from=bundler /b/terradraw-control.css /usr/share/nginx/html/vendor/terradraw-control.css
 
 COPY web/ /usr/share/nginx/html/
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx.conf is an envsubst template: the entrypoint renders it to
+# conf.d/default.conf at startup, substituting ${TOMTOM_API_KEY} (and only
+# defined env vars) — that's how the traffic proxy gets its key without the
+# key ever being baked into the image or shipped to the browser.
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+ENV TOMTOM_API_KEY=""
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget -qO- http://localhost/ >/dev/null 2>&1 || exit 1
