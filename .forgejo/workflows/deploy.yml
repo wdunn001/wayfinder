@@ -15,8 +15,6 @@ jobs:
       REPO_TOKEN: ${{ github.token }}
       FORGEJO_REGISTRY_USER: ${{ secrets.FORGEJO_REGISTRY_USER }}
       FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
-      # TomTom key for the live-traffic proxy (optional; toggle errors politely without it)
-      TOMTOM_API_KEY: ${{ secrets.TOMTOM_API_KEY }}
     steps:
       - name: Build, push & deploy Wayfinder
         run: |
@@ -31,6 +29,10 @@ jobs:
           # Dockerfile vendors MapLibre + Terra Draw from the internet at build time.
           docker build -t "$IMG" .
           docker push "$IMG"
+          # Secrets follow the homelab convention: host env-file on .88, never in
+          # CI config. Read /mnt/data/wayfinder.env through the freshly built
+          # image (docker socket is the host's), extract only the key we need.
+          TOMTOM_API_KEY=$(docker run --rm --entrypoint cat -v /mnt/data/wayfinder.env:/e:ro "$IMG" /e 2>/dev/null | grep '^TOMTOM_API_KEY=' | cut -d= -f2- || true)
           # Refresh the Nomad dashboard tile container (same name + port 8442).
           docker rm -f nomad_custom_maps_directions 2>/dev/null || true
           docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 \
