@@ -114,10 +114,11 @@ function ensureRenderLayers() {
 }
 function rebuild() { const s = map.getSource(SRC); if (s) s.setData(collectFC()); }
 
-// A saved-shape click shows its name/layer (unless we're mid-delete).
+// A saved-shape click shows its name/layer (only in pointer mode — not while
+// drawing over an existing shape, and not mid-delete).
 function initPopups() {
   const show = (e) => {
-    if (currentMode === "delete") return;
+    if (currentMode !== "pointer") return;
     const p = e.features[0].properties;
     new maplibregl.Popup({ offset: 12 })
       .setLngLat(e.lngLat)
@@ -197,12 +198,14 @@ function renderLayersUI() {
 }
 function refreshSketchColor() {
   const c = activeLayer()?.color || PALETTE[0];
+  // updateModeOptions takes the mode NAME string (the mode class is only a TS
+  // generic — confirmed in terra-draw.d.ts). Cosmetic if it ever fails.
   try {
-    draw.updateModeOptions(TerraDrawPolygonMode, { styles: sketchStyles(c) });
-    draw.updateModeOptions(TerraDrawRectangleMode, { styles: sketchStyles(c) });
-    draw.updateModeOptions(TerraDrawLineStringMode, { styles: sketchStyles(c) });
-    draw.updateModeOptions(TerraDrawPointMode, { styles: sketchStyles(c) });
-  } catch { /* older adapter — sketch color is cosmetic anyway */ }
+    draw.updateModeOptions("polygon", { styles: sketchStyles(c) });
+    draw.updateModeOptions("rectangle", { styles: sketchStyles(c) });
+    draw.updateModeOptions("linestring", { styles: sketchStyles(c) });
+    draw.updateModeOptions("point", { styles: sketchStyles(c) });
+  } catch { /* sketch color is cosmetic anyway */ }
 }
 
 /* ---------- layer actions: new / import / export ---------- */

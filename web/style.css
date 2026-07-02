@@ -126,3 +126,9 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 .layer-row .use { background: none; border: 1px solid var(--line); color: var(--muted); cursor: pointer;
   font-size: 11px; border-radius: 6px; padding: 2px 7px; }
 .layer-row.active .use { color: #fff; background: var(--accent); border-color: var(--accent-2); }
+
+/* `.hidden` must beat the display:flex rules above regardless of source order —
+   .tabpane/.draw-toolbar are declared AFTER the original `.hidden` rule, so at
+   equal specificity they were overriding it (layers pane + toolbar rendered
+   inside the Directions tab, and tab switches looked dead). */
+.tabpane.hidden, .draw-toolbar.hidden { display: none; }
