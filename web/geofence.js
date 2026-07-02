@@ -234,11 +234,15 @@ function boot() {
   initLayerActions();
   renderLayersUI();
 }
-// NOTE: map.loaded(), not map.isStyleLoaded() — with an inline style object
-// isStyleLoaded() can return true before the map's real "load" event, and the
-// measure control's onAdd (which addSource's) then throws "Style is not done
-// loading". map.loaded() is only true once the map is genuinely ready.
+// Boot gating is subtle here:
+//  * isStyleLoaded() lies (true before real load with an inline style object)
+//    — the control's onAdd then throws "Style is not done loading".
+//  * "load" is one-shot and can fire BEFORE this deferred module registers its
+//    listener (missed event -> boot never runs).
+//  * loaded() is momentary (false during tile churn) so it can't be trusted alone.
+// => try loaded(), and register BOTH "load" and "idle" ("idle" always fires
+//    eventually, even if "load" was missed); the guard dedupes.
 let booted = false;
 function start() { if (booted) return; booted = true; boot(); }
 if (map.loaded()) start();
-else map.once("load", start);
+else { map.once("load", start); map.once("idle", start); }
