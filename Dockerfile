@@ -19,8 +19,8 @@ RUN npm init -y >/dev/null 2>&1 \
 RUN printf "%s\n" \
   "export { TerraDraw, TerraDrawPolygonMode, TerraDrawRectangleMode, TerraDrawLineStringMode, TerraDrawPointMode, TerraDrawRenderMode } from 'terra-draw';" \
   "export { TerraDrawMapLibreGLAdapter } from 'terra-draw-maplibre-gl-adapter';" > entry.mjs \
- && npx esbuild entry.mjs --bundle --format=esm --platform=browser --target=es2020 --outfile=terra-draw.mjs \
- && wc -c terra-draw.mjs
+ && npx esbuild entry.mjs --bundle --format=esm --platform=browser --target=es2020 --outfile=terra-draw.bundle.js \
+ && wc -c terra-draw.bundle.js
 
 FROM nginx:alpine
 ARG MAPLIBRE_VER=4.7.1
@@ -30,8 +30,12 @@ RUN apk add --no-cache curl \
  && curl -fsSL "https://unpkg.com/maplibre-gl@${MAPLIBRE_VER}/dist/maplibre-gl.js"  -o /usr/share/nginx/html/vendor/maplibre-gl.js \
  && curl -fsSL "https://unpkg.com/maplibre-gl@${MAPLIBRE_VER}/dist/maplibre-gl.css" -o /usr/share/nginx/html/vendor/maplibre-gl.css \
  && apk del curl
-# The self-contained Terra Draw bundle from stage 1.
-COPY --from=bundler /b/terra-draw.mjs /usr/share/nginx/html/vendor/terra-draw.mjs
+# The self-contained Terra Draw bundle from stage 1. NOTE: .js extension on
+# purpose — nginx's stock mime.types has no .mjs entry, so a .mjs file is
+# served as application/octet-stream and the browser's strict module MIME
+# check rejects the whole import graph ("Failed to fetch dynamically imported
+# module"). ES modules import fine from any extension as long as the MIME is JS.
+COPY --from=bundler /b/terra-draw.bundle.js /usr/share/nginx/html/vendor/terra-draw.bundle.js
 
 COPY web/ /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/conf.d/default.conf

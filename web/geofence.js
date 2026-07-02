@@ -15,7 +15,7 @@ import {
   TerraDrawPointMode,
   TerraDrawRenderMode,
   TerraDrawMapLibreGLAdapter,
-} from "./vendor/terra-draw.mjs";
+} from "./vendor/terra-draw.bundle.js"; // .js not .mjs — nginx serves .mjs as octet-stream (module MIME check fails)
 
 const map = window.nomadMap;
 const LS_KEY = "nomad-geofence-layers-v1";
