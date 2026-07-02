@@ -22,7 +22,7 @@ jobs:
         run: |
           set -eu
           apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates docker.io >/dev/null
-          git clone -q "http://token:${REPO_TOKEN}@192.168.1.88:8530/wdunn001/wayfinder.git" /tmp/repo
+          git clone -q "http://token:${REPO_TOKEN}@192.168.1.88:8530/${GITHUB_REPOSITORY}.git" /tmp/repo
           cd /tmp/repo && git checkout -q "${GITHUB_SHA}" 2>/dev/null || true
           IMG=192.168.1.88:8530/wdunn001/wayfinder:latest
           # login: prefer a registry PAT, else the job's own github.token
