@@ -1,1 +1,1 @@
-web/vendor/
+# vendored deps are committed (offline build); regenerate via scripts/build-vendor.sh
