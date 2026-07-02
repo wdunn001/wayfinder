@@ -1,4 +1,4 @@
-# Nomad Maps & Directions — self-contained, offline-capable image.
+# Wayfinder — self-contained, offline-capable maps & directions image.
 # Vendors MapLibre GL at build time so nothing is fetched from a CDN at runtime.
 FROM nginx:alpine
 

@@ -1,0 +1,35 @@
+# Wayfinder CI/CD — build the offline nginx image (vendoring MapLibre + Terra Draw)
+# and (re)deploy the container on .88. The Forgejo runner runs ON .88 with the
+# Docker socket, so build + deploy are both local — no SSH. Inline `run:` only
+# (the runner can't resolve `uses:` actions).
+name: deploy-wayfinder
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-deploy:
+    runs-on: docker
+    env:
+      REPO_TOKEN: ${{ github.token }}
+      FORGEJO_REGISTRY_USER: ${{ secrets.FORGEJO_REGISTRY_USER }}
+      FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+    steps:
+      - name: Build, push & deploy Wayfinder
+        run: |
+          set -eu
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates docker.io >/dev/null
+          git clone -q "http://token:${REPO_TOKEN}@192.168.1.88:8530/wdunn001/wayfinder.git" /tmp/repo
+          cd /tmp/repo && git checkout -q "${GITHUB_SHA}" 2>/dev/null || true
+          IMG=192.168.1.88:8530/wdunn001/wayfinder:latest
+          # login: prefer a registry PAT, else the job's own github.token
+          echo "${FORGEJO_REGISTRY_TOKEN:-$REPO_TOKEN}" \
+            | docker login 192.168.1.88:8530 -u "${FORGEJO_REGISTRY_USER:-${GITHUB_ACTOR:-token}}" --password-stdin
+          # Dockerfile vendors MapLibre + Terra Draw from the internet at build time.
+          docker build -t "$IMG" .
+          docker push "$IMG"
+          # Refresh the Nomad dashboard tile container (same name + port 8442).
+          docker rm -f nomad_custom_maps_directions 2>/dev/null || true
+          docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 "$IMG"
+          docker ps --filter name=nomad_custom_maps_directions --format 'deployed: {{.Status}} {{.Ports}}'

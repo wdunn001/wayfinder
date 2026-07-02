@@ -1,4 +1,4 @@
-/* Nomad Maps & Directions — offline route planner.
+/* Wayfinder — offline maps & directions.
  * Backends are proxied same-origin by the app's nginx:
  *   /geocode -> Photon   /route -> OSRM (route + trip)   /tiles -> tilecache
  * Route-planning model ported from mass-zero-fpv fleet maps (drone bits removed). */
