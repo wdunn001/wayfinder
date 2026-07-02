@@ -253,8 +253,12 @@ function fitTo(feats) {
 
 /* ---------- boot ---------- */
 function boot() {
-  map.addControl(control, "top-right"); // top-left is occupied by the Wayfinder panel
-  initDrawEvents();
+  // The draw control can fail (e.g. style/glyph issues) — never let that take
+  // down the tabs + layers panel with it.
+  try {
+    map.addControl(control, "top-right"); // top-left is occupied by the Wayfinder panel
+    initDrawEvents();
+  } catch (e) { console.error("draw control failed to mount:", e && e.message); }
   initTabs();
   initLayerActions();
   renderLayersUI();

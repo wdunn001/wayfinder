@@ -84,6 +84,10 @@ const map = new maplibregl.Map({
   container: "map",
   style: {
     version: 8,
+    // Self-hosted glyphs (vendored pbf ranges): any layer using text-field
+    // (e.g. the measure control's labels) hard-requires a style `glyphs`
+    // endpoint — without it addLayer throws and the whole draw control dies.
+    glyphs: "/vendor/fonts/{fontstack}/{range}.pbf",
     sources: {
       street: { type: "raster", tiles: [TILE.street], tileSize: 256, maxzoom: 19,
         attribution: '&copy; OpenStreetMap contributors (self-hosted)' },

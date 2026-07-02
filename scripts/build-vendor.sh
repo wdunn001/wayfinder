@@ -36,6 +36,13 @@ docker run --rm -v "$OUT":/out node:20-alpine sh -euc "
   cp \$(find node_modules/@watergis/maplibre-gl-terradraw/dist -name '*.css' | head -1) /out/terradraw-control.css
   wget -qO /out/maplibre-gl.js  https://unpkg.com/maplibre-gl@${MAPLIBRE_VER}/dist/maplibre-gl.js
   wget -qO /out/maplibre-gl.css https://unpkg.com/maplibre-gl@${MAPLIBRE_VER}/dist/maplibre-gl.css
+  # Glyphs for text layers (measure labels). Style: glyphs=/vendor/fonts/{fontstack}/{range}.pbf
+  mkdir -p '/out/fonts/Noto Sans Regular'
+  i=0; while [ \$i -le 65535 ]; do
+    r=\"\$i-\$((i+255))\"
+    wget -qO \"/out/fonts/Noto Sans Regular/\$r.pbf\" \"https://fonts.openmaptiles.org/Noto%20Sans%20Regular/\$r.pbf\" || true
+    i=\$((i+256))
+  done
   ls -la /out
 "
 echo "vendored — commit web/vendor/ to keep the offline build current"
