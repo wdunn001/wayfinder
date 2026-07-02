@@ -181,7 +181,7 @@ async function setTraffic(on) {
       const y = Math.floor(((1 - Math.log(Math.tan((c.lat * Math.PI) / 180) + 1 / Math.cos((c.lat * Math.PI) / 180)) / Math.PI) / 2) * n);
       const r = await fetch(`/traffic/${z}/${x}/${y}.png`, { cache: "no-store" });
       if (!r.ok) {
-        showError(r.status === 403
+        showError(r.status === 401 || r.status === 403
           ? "Traffic needs a TomTom API key on the server (set TOMTOM_API_KEY on the container)."
           : `Traffic tiles unavailable (HTTP ${r.status}) — is the box online?`);
         return;
