@@ -363,7 +363,9 @@ document.getElementById("btn-route").onclick = async () => {
     currentRoutes = j.routes; selectedRouteIdx = 0; optimizedOrder = false;
     renderRoutes(true);
     showRouteSummary();
-    evaluateRoutesTraffic(); // async; re-renders the summary as results land
+    // Fire-and-forget enhancement: directions are already rendered above; any
+    // traffic failure only means "no adjusted ETA", never "no route".
+    evaluateRoutesTraffic().catch(() => {});
   } catch { showError("Routing engine (OSRM) unreachable."); }
 };
 
@@ -381,7 +383,7 @@ document.getElementById("btn-optimize").onclick = async () => {
     currentRoutes = [j.trips[0]]; selectedRouteIdx = 0; optimizedOrder = true;
     renderRoutes(true);
     showRouteSummary();
-    evaluateRoutesTraffic();
+    evaluateRoutesTraffic().catch(() => {});
   } catch { showError("Optimizer (OSRM trip) unreachable."); }
 };
 
@@ -432,13 +434,17 @@ async function flowFactor(route) {
   const ratios = [];
   for (const [lng, lat] of pts) {
     try {
-      const r = await fetch(`/traffic-flow/${lat.toFixed(3)},${lng.toFixed(3)}`);
+      // Hard 4s budget per sample — a dead/slow TomTom degrades in seconds,
+      // never stalls background evaluation for minutes.
+      const r = await fetch(`/traffic-flow/${lat.toFixed(3)},${lng.toFixed(3)}`,
+        { signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined });
       if (r.status === 401 || r.status === 403) { trafficEvalUsable = false; return null; }
+      if (r.status >= 500) return null; // upstream down: skip this route quietly
       if (!r.ok) continue;
       const d = (await r.json()).flowSegmentData;
       if (d && d.currentSpeed > 0 && d.freeFlowSpeed > 0)
         ratios.push(Math.min(1.15, d.currentSpeed / d.freeFlowSpeed));
-    } catch { trafficEvalUsable = false; return null; }
+    } catch { trafficEvalUsable = false; return null; } // timeout/offline: stop for this session
   }
   if (!ratios.length) return null;
   const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
