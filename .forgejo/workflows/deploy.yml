@@ -28,7 +28,11 @@ jobs:
             | docker login 192.168.1.88:8530 -u "${FORGEJO_REGISTRY_USER:-${GITHUB_ACTOR:-token}}" --password-stdin
           # Dockerfile vendors MapLibre + Terra Draw from the internet at build time.
           docker build -t "$IMG" .
-          docker push "$IMG"
+          # Registry push is best-effort: the job's auto-token lacks package-write
+          # on the org namespace (reqPackageAccess). Build + deploy are on the
+          # same host, so the local image is what actually ships; set
+          # FORGEJO_REGISTRY_USER/TOKEN secrets to make the push stick.
+          docker push "$IMG" || echo "::notice:: registry push skipped (no package-write token) — deployed from local image"
           # Secrets follow the homelab convention: host env-file on .88, never in
           # CI config. Read /mnt/data/wayfinder.env through the freshly built
           # image (docker socket is the host's), extract only the key we need.
