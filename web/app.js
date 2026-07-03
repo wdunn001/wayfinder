@@ -171,13 +171,27 @@ map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bott
 // control: click to locate, click again to follow; the heading cone appears on
 // devices that expose orientation data. Requires the HTTPS origin
 // (maps.quasarke.net) — browsers block geolocation on plain http.
-map.addControl(new maplibregl.GeolocateControl({
+const geoCtl = new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true, timeout: 10000 },
   trackUserLocation: true,
   showUserLocation: true,
   showAccuracyCircle: true,
   showUserHeading: true,
-}), "bottom-right");
+});
+map.addControl(geoCtl, "bottom-right");
+// Surface geolocation failures visibly — silent failure looks like "it never
+// asked". PERMISSION_DENIED (1) also fires when the browser treats the origin
+// as insecure (e.g. an untrusted internal CA cert on the LAN side).
+geoCtl.on("error", (e) => {
+  const code = e && e.code;
+  showError(code === 1
+    ? "Location blocked: allow it in site settings — and check the padlock; an untrusted cert disables geolocation."
+    : `Location unavailable (${(e && e.message) || "GPS error"}).`);
+});
+geoCtl.on("geolocate", () => clearError());
+// Auto-locate on first load so the permission prompt appears without hunting
+// for the button; the control stays available for re-centering / follow mode.
+map.once("idle", () => { try { geoCtl.trigger(); } catch { /* unsupported */ } });
 map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left");
 
 // Exposed for the geofence-layers ES module (geofence.js), which owns drawing + persistence.

@@ -4,7 +4,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Wayfinder — Maps &amp; Directions</title>
-  <link rel="manifest" href="manifest.json" />
+  <!-- use-credentials: the manifest is fetched WITHOUT cookies by default, so
+       behind Authentik forward-auth it 302s and the browser sees no valid
+       manifest (= no install prompt). Credentials make it ride the session. -->
+  <link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
   <meta name="theme-color" content="#1b1f24" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="vendor/maplibre-gl.css" />
