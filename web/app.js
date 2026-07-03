@@ -505,6 +505,7 @@ let optimizedOrder = false;
 
 document.getElementById("btn-route").onclick = async () => {
   clearError();
+  setAddStop(false);   // computing a route ends "add stop by clicking" so stray taps don't drop pins
   try {
     // alternatives=true -> OSRM returns up to 2 extra candidate routes to rank.
     const r = await fetch(`${OSRM}/route/v1/driving/${coordStr()}?overview=full&geometries=geojson&alternatives=true&steps=true`);
@@ -522,6 +523,7 @@ document.getElementById("btn-route").onclick = async () => {
 
 document.getElementById("btn-optimize").onclick = async () => {
   clearError();
+  setAddStop(false);
   try {
     const r = await fetch(`${OSRM}/trip/v1/driving/${coordStr()}?source=first&roundtrip=false&overview=full&geometries=geojson&steps=true`);
     const j = await r.json();
