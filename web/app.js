@@ -640,6 +640,7 @@ function showRouteSummary() {
   const btn = el.querySelector(".alt-suggest");
   if (btn) btn.onclick = () => selectRoute(Number(btn.dataset.idx));
   el.classList.remove("hidden");
+  updateDrawerLauncher();
 }
 
 /* ---------- batch import ---------- */
@@ -666,9 +667,58 @@ document.getElementById("btn-batch").onclick = async () => {
 };
 
 /* ---------- errors / misc ---------- */
-function hideSummary() { document.getElementById("summary").classList.add("hidden"); }
+function hideSummary() { document.getElementById("summary").classList.add("hidden"); updateDrawerLauncher(); }
 function showError(msg) { const e = document.getElementById("error"); e.textContent = msg; e.classList.remove("hidden"); }
 function clearError() { document.getElementById("error").classList.add("hidden"); }
 function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* ---------- left drawer: collapse + summary launcher ----------
+ * The panel is a slide-in left drawer. Collapsed, it slides off and a compact
+ * launcher pill takes over showing summary data (route ETA/distance, or the
+ * active tab). This is the surface turn-by-turn will populate next: while
+ * navigating, the collapsed pill can show the next maneuver so the map stays
+ * unobstructed. */
+function updateDrawerLauncher() {
+  const launcher = document.getElementById("drawer-launcher");
+  if (!launcher) return;
+  const txt = launcher.querySelector(".dl-text");
+  const sum = document.getElementById("summary");
+  const big = sum && !sum.classList.contains("hidden") ? sum.querySelector(".big") : null;
+  if (big && big.textContent.trim()) {
+    txt.textContent = big.textContent.trim();          // e.g. "12.3 mi · 24 min"
+    launcher.classList.add("route");
+  } else {
+    const active = document.querySelector(".tab.active");
+    txt.textContent = active && active.dataset.tab === "layers" ? "Geofence layers" : "Directions & layers";
+    launcher.classList.remove("route");
+  }
+}
+
+(function initDrawer() {
+  const panel = document.getElementById("panel");
+  const launcher = document.getElementById("drawer-launcher");
+  const collapseBtn = document.getElementById("btn-collapse");
+  if (!panel || !launcher || !collapseBtn) return;
+  const KEY = "wf-drawer-collapsed";
+
+  function setCollapsed(collapsed, persist = true) {
+    panel.classList.toggle("collapsed", collapsed);
+    launcher.classList.toggle("hidden", !collapsed);
+    collapseBtn.setAttribute("aria-expanded", String(!collapsed));
+    if (collapsed) updateDrawerLauncher();
+    if (persist) { try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch { /* private mode */ } }
+  }
+  window.wfSetDrawerCollapsed = setCollapsed;
+
+  collapseBtn.addEventListener("click", () => setCollapsed(true));
+  launcher.addEventListener("click", () => setCollapsed(false));
+
+  // Honor the saved preference; with none, default collapsed on phones so the
+  // drawer never eats the map on first load (the reason for this change).
+  let start = null;
+  try { start = localStorage.getItem(KEY); } catch { /* private mode */ }
+  if (start === null) start = window.matchMedia("(max-width: 640px)").matches ? "1" : "0";
+  setCollapsed(start === "1", false);
+})();
 
 render();

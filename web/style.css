@@ -14,15 +14,40 @@
 html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); }
 #map { position: absolute; inset: 0; background: #0e1216; }
 
+/* ---------- left drawer ---------- */
 .panel {
-  position: absolute; top: 12px; left: 12px; z-index: 5;
-  width: 360px; max-width: calc(100vw - 24px); max-height: calc(100vh - 24px);
-  display: flex; flex-direction: column; gap: 10px; overflow: auto;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+  position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
+  width: 360px; max-width: 92vw;
+  display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden;
+  background: var(--panel); border-right: 1px solid var(--line);
+  border-radius: 0 14px 14px 0;
+  padding: 14px; box-shadow: 6px 0 30px rgba(0,0,0,.45);
+  transition: transform .24s cubic-bezier(.4,0,.2,1);
+  overscroll-behavior: contain;
 }
-.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.panel-head h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
+/* Collapsed: slide fully off the left edge; the launcher pill takes over. */
+.panel.collapsed { transform: translateX(-101%); }
+
+/* Compact launcher shown while the drawer is collapsed — summary + reopen. */
+.drawer-launcher {
+  position: absolute; top: 12px; left: 12px; z-index: 6;
+  display: inline-flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
+  padding: 9px 13px; border-radius: 22px; cursor: pointer;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line);
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 13px; font-weight: 600;
+}
+.drawer-launcher .dl-icon { font-size: 15px; line-height: 1; }
+.drawer-launcher .dl-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-launcher.route { border-color: var(--accent-2); }
+
+.panel-head { display: flex; align-items: center; gap: 8px; }
+.panel-head h1 { font-size: 15px; margin: 0; letter-spacing: .2px; flex: 1; }
+.collapse-btn {
+  flex: none; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
+  font-size: 18px; line-height: 1; display: grid; place-items: center;
+}
+.collapse-btn:hover { color: #fff; border-color: var(--accent-2); }
 .basemap { display: flex; gap: 4px; }
 .base-btn { font-size: 11px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--muted); cursor: pointer; }
@@ -149,3 +174,13 @@ body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
 .add-stop { padding: 9px; border-radius: 8px; border: 1px dashed var(--line);
   background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }
 .add-stop.active { border-style: solid; border-color: var(--accent-2); background: var(--accent); color: #fff; font-weight: 600; }
+
+/* ---------- mobile: drawer is a slide-in overlay, dismissible via collapse ---------- */
+@media (max-width: 640px) {
+  .panel { width: min(340px, 88vw); border-radius: 0 16px 16px 0; padding: 12px; }
+  /* Let the header wrap so the title + basemap toggles never overflow a narrow drawer. */
+  .panel-head { flex-wrap: wrap; }
+  .panel-head h1 { flex: 1 1 auto; }
+  .basemap { flex: 1 0 100%; justify-content: flex-start; }
+  .drawer-launcher { top: 10px; left: 10px; padding: 10px 14px; }
+}

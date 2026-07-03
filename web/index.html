@@ -21,8 +21,18 @@
        on the map): every Terra Draw mode + select/edit + delete + download +
        distance/area measurement. Mounted from geofence.js. -->
 
-  <div id="panel" class="panel">
+  <!-- Collapsed-state launcher: a compact pill that shows summary data (route
+       ETA/distance, or the active tab) and reopens the drawer. Kept OUTSIDE the
+       drawer so it stays on-screen when the drawer slides away. This is also
+       where the live turn-by-turn "next maneuver" summary will surface. -->
+  <button id="drawer-launcher" class="drawer-launcher hidden" aria-label="Open panel">
+    <span class="dl-icon">☰</span>
+    <span class="dl-text">Directions &amp; layers</span>
+  </button>
+
+  <aside id="panel" class="panel drawer">
     <header class="panel-head">
+      <button id="btn-collapse" class="collapse-btn" title="Collapse panel" aria-label="Collapse panel">‹</button>
       <h1>Wayfinder</h1>
       <div class="basemap">
         <button data-base="street" class="base-btn active">Street</button>
@@ -84,7 +94,7 @@
 
       <ul id="layers" class="layers"></ul>
     </section>
-  </div>
+  </aside>
 
   <!-- MapLibre first (exposes window.maplibregl), then the classic route planner. -->
   <script src="vendor/maplibre-gl.js"></script>
