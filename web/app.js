@@ -188,9 +188,23 @@ map.on("load", () => {
     layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#8a98a6", "line-width": 4, "line-opacity": 0.7, "line-dasharray": [1.5, 1] } });
   map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  // Dark casing under the route for contrast against basemap + traffic raster.
+  map.addLayer({ id: "route-casing", type: "line", source: "route",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#0d1b2a", "line-width": 8, "line-opacity": 0.45 } });
+  // The route is drawn as SEGMENTS colored by live congestion (from the same
+  // TomTom flow samples that adjust the ETA): blue = free flow / no data,
+  // amber = slowdown, red = jam. This way the route line SHOWS the traffic
+  // instead of covering the overlay under it.
   map.addLayer({ id: "route-line", type: "line", source: "route",
     layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#1e88e5", "line-width": 5, "line-opacity": 0.85 } });
+    paint: {
+      "line-color": ["match", ["get", "cong"],
+        "slow", "#f9a825",
+        "jam", "#e53935",
+        /* free / no data */ "#1e88e5"],
+      "line-width": 5, "line-opacity": 0.9,
+    } });
   // Click a grey alternative to make it the active route.
   map.on("click", "route-alts", (e) => {
     const idx = e.features && e.features[0] && e.features[0].properties.idx;
@@ -488,7 +502,7 @@ function selectRoute(idx) {
 function renderRoutes(fit) {
   const sel = currentRoutes[selectedRouteIdx];
   if (!sel) return clearRoute();
-  map.getSource("route").setData({ type: "Feature", geometry: sel.geometry, properties: {} });
+  map.getSource("route").setData({ type: "FeatureCollection", features: routeSegments(sel) });
   map.getSource("route-alt").setData({
     type: "FeatureCollection",
     features: currentRoutes.map((r, i) => ({ type: "Feature", geometry: r.geometry, properties: { idx: i } }))
@@ -511,15 +525,18 @@ function clearRoute() {
 let trafficEvalUsable = true; // flips false on auth/network failure (no spam)
 function sampleCoords(geometry, n = 8) {
   const cs = geometry.coordinates;
-  if (cs.length <= 2) return [cs[0]];
+  if (cs.length <= 2) return [{ coord: cs[0], idx: 0 }];
   const out = [];
-  for (let i = 1; i <= n; i++) out.push(cs[Math.floor((cs.length - 1) * i / (n + 1))]);
+  for (let i = 1; i <= n; i++) {
+    const idx = Math.floor((cs.length - 1) * i / (n + 1));
+    out.push({ coord: cs[idx], idx });
+  }
   return out;
 }
 async function flowFactor(route) {
   const pts = sampleCoords(route.geometry);
-  const ratios = [];
-  for (const [lng, lat] of pts) {
+  const samples = [];
+  for (const { coord: [lng, lat], idx } of pts) {
     try {
       // Hard 4s budget per sample — a dead/slow TomTom degrades in seconds,
       // never stalls background evaluation for minutes.
@@ -530,12 +547,12 @@ async function flowFactor(route) {
       if (!r.ok) continue;
       const d = (await r.json()).flowSegmentData;
       if (d && d.currentSpeed > 0 && d.freeFlowSpeed > 0)
-        ratios.push(Math.min(1.15, d.currentSpeed / d.freeFlowSpeed));
+        samples.push({ idx, ratio: Math.min(1.15, d.currentSpeed / d.freeFlowSpeed) });
     } catch { trafficEvalUsable = false; return null; } // timeout/offline: stop for this session
   }
-  if (!ratios.length) return null;
-  const avg = ratios.reduce((a, b) => a + b, 0) / ratios.length;
-  return Math.max(0.25, avg); // clamp: never claim >4x slowdown from sampling noise
+  if (!samples.length) return null;
+  const avg = samples.reduce((a, s) => a + s.ratio, 0) / samples.length;
+  return { factor: Math.max(0.25, avg), samples }; // clamp: sampling noise can't claim >4x slowdown
 }
 async function evaluateRoutesTraffic() {
   if (!trafficEvalUsable || !currentRoutes.length) return;
@@ -543,9 +560,32 @@ async function evaluateRoutesTraffic() {
   for (const r of mine) {
     const f = await flowFactor(r);
     if (mine !== currentRoutes) return; // stale
-    if (f !== null) { r._factor = f; r._adjusted = r.duration / f; }
+    if (f !== null) { r._factor = f.factor; r._adjusted = r.duration / f.factor; r._samples = f.samples; }
+    renderRoutes(false); // repaint the selected route with congestion colors
     showRouteSummary();
   }
+}
+/* Split a route into congestion-classed segments around its flow samples so
+ * the drawn line SHOWS traffic (blue free / amber slow / red jam). */
+function routeSegments(route) {
+  const geom = route.geometry;
+  const s = route._samples;
+  if (!s || !s.length) return [{ type: "Feature", geometry: geom, properties: { cong: "free" } }];
+  const cs = geom.coordinates;
+  const cls = (r) => (r < 0.6 ? "jam" : r < 0.85 ? "slow" : "free");
+  const feats = [];
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    // segment ends midway to the next sample (or at the route end)
+    const end = i === s.length - 1 ? cs.length - 1 : Math.floor((s[i].idx + s[i + 1].idx) / 2);
+    if (end > start) {
+      feats.push({ type: "Feature",
+        geometry: { type: "LineString", coordinates: cs.slice(start, end + 1) },
+        properties: { cong: cls(s[i].ratio) } });
+    }
+    start = end;
+  }
+  return feats;
 }
 
 /* ---------- summary (base + traffic-adjusted + alternative suggestion) ---------- */
