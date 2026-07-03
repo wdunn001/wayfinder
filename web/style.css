@@ -18,13 +18,34 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 .panel {
   position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
   width: 360px; max-width: 92vw;
-  display: flex; flex-direction: column; gap: 10px; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 10px; overflow: hidden;
   background: var(--panel); border-right: 1px solid var(--line);
   border-radius: 0 14px 14px 0;
   padding: 14px; box-shadow: 6px 0 30px rgba(0,0,0,.45);
   transition: transform .24s cubic-bezier(.4,0,.2,1);
-  overscroll-behavior: contain;
 }
+/* Header + tabs stay pinned (they're flex-none); only this body scrolls, so the
+   collapse toggle never leaves the screen. Each tab pane thus gets its own
+   scroll region (directions maneuver list / geofence layer list). */
+.drawer-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: 10px;
+  overscroll-behavior: contain;
+  margin: 0 -4px; padding: 0 4px; /* room for focus rings without a h-scrollbar */
+}
+
+/* Collapsible route builder — auto-collapses after Directions so the maneuver
+   list takes over; click the summary to reopen and edit stops. */
+.route-builder { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.route-builder > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 7px; padding: 2px 0;
+  font-size: 13px; font-weight: 600; color: var(--text);
+}
+.route-builder > summary::-webkit-details-marker { display: none; }
+.route-builder > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+.route-builder[open] > summary::before { transform: rotate(90deg); }
+.rb-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
 /* Collapsed: slide fully off the left edge; the launcher pill takes over. */
 .panel.collapsed { transform: translateX(-101%); }
 

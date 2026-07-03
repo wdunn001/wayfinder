@@ -379,6 +379,16 @@ map.on("click", async (e) => {
   } catch { /* keep the pin label */ }
 });
 
+// Tap the map to dismiss an open drawer (mobile-friendly "click outside"). Skip
+// while a tool owns clicks (add-stop / drawing) or when tapping a route feature.
+map.on("click", (e) => {
+  if (addStopArmed || window.nomadDrawActive) return;
+  if (!window.wfDrawerCollapsed || window.wfDrawerCollapsed()) return;
+  const layers = ["route-alts", "route-line"].filter((l) => map.getLayer(l));
+  if (layers.length && map.queryRenderedFeatures(e.point, { layers }).length) return;
+  window.wfSetDrawerCollapsed(true);
+});
+
 /* ---------- basemap switch ---------- */
 document.querySelectorAll(".base-btn").forEach((b) => {
   b.addEventListener("click", () => {
@@ -503,6 +513,7 @@ document.getElementById("btn-route").onclick = async () => {
     currentRoutes = j.routes; selectedRouteIdx = 0; optimizedOrder = false;
     renderRoutes(true);
     showRouteSummary();
+    collapseRouteBuilder();
     // Fire-and-forget enhancement: directions are already rendered above; any
     // traffic failure only means "no adjusted ETA", never "no route".
     evaluateRoutesTraffic().catch(() => {});
@@ -523,11 +534,12 @@ document.getElementById("btn-optimize").onclick = async () => {
     currentRoutes = [j.trips[0]]; selectedRouteIdx = 0; optimizedOrder = true;
     renderRoutes(true);
     showRouteSummary();
+    collapseRouteBuilder();
     evaluateRoutesTraffic().catch(() => {});
   } catch { showError("Optimizer (OSRM trip) unreachable."); }
 };
 
-document.getElementById("btn-clear").onclick = () => { stops = []; currentRoutes = []; clearRoute(); clearError(); hideSummary(); render(); };
+document.getElementById("btn-clear").onclick = () => { stops = []; currentRoutes = []; clearRoute(); clearError(); hideSummary(); openRouteBuilder(); render(); };
 
 function routeErr(j) {
   if (j.code === "NoRoute") return "No drivable route between these stops (check OSRM region coverage).";
@@ -557,6 +569,10 @@ function clearRoute() {
   ["route", "route-alt"].forEach((s) => map.getSource && map.getSource(s) &&
     map.getSource(s).setData({ type: "FeatureCollection", features: [] }));
 }
+// The route builder (search/stops/actions) is a collapsible <details>; collapse
+// it after a route is computed so the maneuver list gets the room, reopen it to edit.
+function collapseRouteBuilder() { const d = document.getElementById("route-builder"); if (d) d.open = false; }
+function openRouteBuilder() { const d = document.getElementById("route-builder"); if (d) d.open = true; }
 
 /* ================= turn-by-turn steps + "from my location" ================= */
 let currentSteps = [];     // [{ loc:[lng,lat], text, icon, dist }] for the selected route
@@ -865,6 +881,7 @@ function updateDrawerLauncher() {
     if (persist) { try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch { /* private mode */ } }
   }
   window.wfSetDrawerCollapsed = setCollapsed;
+  window.wfDrawerCollapsed = () => panel.classList.contains("collapsed");
 
   collapseBtn.addEventListener("click", () => setCollapsed(true));
   launcher.addEventListener("click", () => setCollapsed(false));

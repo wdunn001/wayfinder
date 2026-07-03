@@ -48,8 +48,17 @@
       <button class="tab" data-tab="layers">Geofence layers</button>
     </nav>
 
+    <!-- Scrollable body: the header + tabs above stay PINNED so the collapse
+         toggle is always reachable even while the directions/layers scroll. -->
+    <div class="drawer-body">
+
     <!-- ===================== DIRECTIONS TAB ===================== -->
     <section id="tab-directions" class="tabpane">
+      <!-- The route builder collapses (and auto-collapses after Directions is
+           clicked) so the turn-by-turn maneuver list gets the space. -->
+      <details id="route-builder" class="route-builder" open>
+        <summary>Plan route</summary>
+        <div class="rb-body">
       <div class="search">
         <input id="search-input" type="text" placeholder="Search address or place…" autocomplete="off" />
         <ul id="search-results" class="search-results hidden"></ul>
@@ -81,6 +90,8 @@
           <span id="batch-status" class="muted"></span>
         </div>
       </details>
+        </div><!-- .rb-body -->
+      </details><!-- #route-builder -->
 
       <div id="summary" class="summary hidden"></div>
       <!-- Turn-by-turn maneuver list (from OSRM steps). The current step is
@@ -104,6 +115,7 @@
 
       <ul id="layers" class="layers"></ul>
     </section>
+    </div><!-- .drawer-body -->
   </aside>
 
   <!-- MapLibre first (exposes window.maplibregl), then the classic route planner. -->
