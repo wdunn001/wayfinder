@@ -188,7 +188,20 @@ geoCtl.on("error", (e) => {
     ? "Location blocked: allow it in site settings — and check the padlock; an untrusted cert disables geolocation."
     : `Location unavailable (${(e && e.message) || "GPS error"}).`);
 });
-geoCtl.on("geolocate", () => clearError());
+// Every position fix: clear stale errors, remember the position for turn-by-turn
+// + "from my location", advance the active maneuver, and seed the origin the
+// first time if "from my location by default" is on.
+geoCtl.on("geolocate", (e) => {
+  clearError();
+  if (e && e.coords) {
+    navUserPos = [e.coords.longitude, e.coords.latitude];
+    if (!originSeeded && fromMyLocation && stops.length === 0) {
+      originSeeded = true;
+      setOrigin(navUserPos[0], navUserPos[1], false).catch(() => {});
+    }
+    advanceNav();
+  }
+});
 // Auto-locate on first load so the permission prompt appears without hunting
 // for the button; the control stays available for re-centering / follow mode.
 map.once("idle", () => { try { geoCtl.trigger(); } catch { /* unsupported */ } });
@@ -484,7 +497,7 @@ document.getElementById("btn-route").onclick = async () => {
   clearError();
   try {
     // alternatives=true -> OSRM returns up to 2 extra candidate routes to rank.
-    const r = await fetch(`${OSRM}/route/v1/driving/${coordStr()}?overview=full&geometries=geojson&alternatives=true`);
+    const r = await fetch(`${OSRM}/route/v1/driving/${coordStr()}?overview=full&geometries=geojson&alternatives=true&steps=true`);
     const j = await r.json();
     if (j.code !== "Ok" || !j.routes?.[0]) return showError(routeErr(j));
     currentRoutes = j.routes; selectedRouteIdx = 0; optimizedOrder = false;
@@ -499,7 +512,7 @@ document.getElementById("btn-route").onclick = async () => {
 document.getElementById("btn-optimize").onclick = async () => {
   clearError();
   try {
-    const r = await fetch(`${OSRM}/trip/v1/driving/${coordStr()}?source=first&roundtrip=false&overview=full&geometries=geojson`);
+    const r = await fetch(`${OSRM}/trip/v1/driving/${coordStr()}?source=first&roundtrip=false&overview=full&geometries=geojson&steps=true`);
     const j = await r.json();
     if (j.code !== "Ok" || !j.trips?.[0]) return showError(routeErr(j));
     // waypoints[i].waypoint_index = position of original stop i in the optimized order
@@ -544,6 +557,131 @@ function clearRoute() {
   ["route", "route-alt"].forEach((s) => map.getSource && map.getSource(s) &&
     map.getSource(s).setData({ type: "FeatureCollection", features: [] }));
 }
+
+/* ================= turn-by-turn steps + "from my location" ================= */
+let currentSteps = [];     // [{ loc:[lng,lat], text, icon, dist }] for the selected route
+let navIdx = 0;            // index of the UPCOMING maneuver during live navigation
+let navUserPos = null;     // last GPS fix [lng,lat] from the GeolocateControl
+let originSeeded = false;  // origin auto-seeded from GPS once this session
+
+const stepsEl = document.getElementById("steps-list");
+
+function haversine(a, b) {
+  const R = 6371000, rad = (d) => d * Math.PI / 180;
+  const dLat = rad(b[1] - a[1]), dLng = rad(b[0] - a[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a[1])) * Math.cos(rad(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const cardinal = (bearing) =>
+  ["north","northeast","east","southeast","south","southwest","west","northwest"][Math.round(((bearing || 0) % 360) / 45) % 8];
+
+// Compact arrow glyphs (render everywhere — no icon font needed offline).
+function maneuverIcon(st) {
+  const m = st.maneuver || {}, mod = m.modifier || "";
+  if (m.type === "arrive") return "⚑";
+  if (m.type === "depart") return "•";
+  if (m.type === "roundabout" || m.type === "rotary") return "⟳";
+  if (mod === "uturn") return "↩";
+  if (mod === "sharp left") return "↰";
+  if (mod === "sharp right") return "↱";
+  if (mod === "slight left") return "↖";
+  if (mod === "slight right") return "↗";
+  if (mod === "left") return "←";
+  if (mod === "right") return "→";
+  return "↑";
+}
+// OSRM returns maneuver type/modifier + road name, NOT prose — build the text.
+function stepInstruction(st) {
+  const m = st.maneuver || {}, road = (st.name || "").trim();
+  const mod = m.modifier || "", onto = road ? ` onto ${road}` : "", on = road ? ` on ${road}` : "";
+  switch (m.type) {
+    case "depart": return `Head ${cardinal(m.bearing_after)}${on}`;
+    case "turn": case "end of road": return `Turn ${mod}${onto}`;
+    case "new name": return `Continue${onto}`;
+    case "continue": return `Continue ${mod}`.trim() + onto;
+    case "merge": return `Merge ${mod}`.trim() + onto;
+    case "on ramp": return `Take the ramp${mod ? " " + mod : ""}${onto}`;
+    case "off ramp": return `Take the exit${mod ? " " + mod : ""}${onto}`;
+    case "fork": return `Keep ${mod || "straight"}${onto}`;
+    case "roundabout": case "rotary": return `Take the roundabout${m.exit ? `, exit ${m.exit}` : ""}${onto}`;
+    case "roundabout turn": return `At the roundabout turn ${mod}${onto}`;
+    case "arrive": return road ? `Arrive at ${road}` : "Arrive at destination";
+    default: return `${m.type || "Continue"}${mod ? " " + mod : ""}${onto}`.trim();
+  }
+}
+function buildSteps(route) {
+  const out = [];
+  for (const leg of (route.legs || []))
+    for (const st of (leg.steps || []))
+      if (st.maneuver && st.maneuver.location)
+        out.push({ loc: st.maneuver.location, text: stepInstruction(st), icon: maneuverIcon(st), dist: st.distance || 0 });
+  return out;
+}
+function renderSteps() {
+  if (!stepsEl) return;
+  currentSteps = buildSteps(currentRoutes[selectedRouteIdx] || {});
+  navIdx = 0;
+  if (!currentSteps.length) { stepsEl.classList.add("hidden"); stepsEl.innerHTML = ""; return; }
+  stepsEl.innerHTML = currentSteps.map((s, i) =>
+    `<li data-i="${i}"><span class="man-ico">${s.icon}</span>` +
+    `<span class="man-txt">${escapeHtml(s.text)}` +
+    `${s.dist > 0 ? `<span class="man-dist"> · ${fmtDist(s.dist)}</span>` : ""}</span></li>`).join("");
+  [...stepsEl.children].forEach((li, i) =>
+    li.addEventListener("click", () => { if (currentSteps[i]) map.flyTo({ center: currentSteps[i].loc, zoom: 16 }); }));
+  stepsEl.classList.remove("hidden");
+  if (navUserPos) advanceNav(); else highlightStep();
+}
+function highlightStep() {
+  if (!stepsEl) return;
+  [...stepsEl.children].forEach((li, i) => li.classList.toggle("current", i === navIdx));
+}
+// Advance the "upcoming maneuver" pointer as the user reaches each turn (~30 m),
+// then refresh the highlight + the collapsed launcher's live turn text.
+function advanceNav() {
+  if (!currentSteps.length || !navUserPos) return;
+  while (navIdx < currentSteps.length - 1 && haversine(navUserPos, currentSteps[navIdx].loc) < 30) navIdx++;
+  highlightStep();
+  updateDrawerLauncher();
+}
+
+/* ---------- "from my location" origin ---------- */
+const btnMyLoc = document.getElementById("btn-my-location");
+const chkFromHere = document.getElementById("chk-from-here");
+const FROM_KEY = "wf-from-my-location";
+let fromMyLocation = true;
+try { fromMyLocation = localStorage.getItem(FROM_KEY) !== "0"; } catch { /* private mode */ } // default ON
+if (chkFromHere) {
+  chkFromHere.checked = fromMyLocation;
+  chkFromHere.addEventListener("change", () => {
+    fromMyLocation = chkFromHere.checked;
+    try { localStorage.setItem(FROM_KEY, fromMyLocation ? "1" : "0"); } catch { /* private mode */ }
+    if (fromMyLocation && navUserPos && stops.length === 0) { originSeeded = true; setOrigin(navUserPos[0], navUserPos[1]).catch(() => {}); }
+  });
+}
+function currentPosition() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error("no geolocation"));
+    navigator.geolocation.getCurrentPosition(
+      (p) => res([p.coords.longitude, p.coords.latitude]), rej,
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 });
+  });
+}
+// Insert (or replace) the current position as stop #0, flagged `origin` so it
+// never stacks duplicates when re-used.
+async function setOrigin(lng, lat, fly = true) {
+  let label = "My location";
+  try { const r = await geocodeReverse(lat, lng); if (r && r.label) label = `My location · ${r.label.split(",")[0]}`; } catch { /* keep generic label */ }
+  const origin = { localId: newId(), lat, lng, label, origin: true };
+  if (stops[0] && stops[0].origin) stops[0] = origin; else stops.unshift(origin);
+  clearRoute(); hideSummary(); render();
+  if (fly) map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 13) });
+}
+if (btnMyLoc) btnMyLoc.addEventListener("click", async () => {
+  btnMyLoc.classList.add("busy");
+  try { const [lng, lat] = await currentPosition(); await setOrigin(lng, lat); }
+  catch { showError("Couldn't get your location — allow location access (needs the HTTPS site)."); }
+  finally { btnMyLoc.classList.remove("busy"); }
+});
 
 /* Traffic evaluation: sample points along each route, ask TomTom (via the
  * same-origin cached /traffic-flow proxy) for current vs free-flow speed, and
@@ -640,6 +778,7 @@ function showRouteSummary() {
   const btn = el.querySelector(".alt-suggest");
   if (btn) btn.onclick = () => selectRoute(Number(btn.dataset.idx));
   el.classList.remove("hidden");
+  renderSteps();
   updateDrawerLauncher();
 }
 
@@ -667,7 +806,12 @@ document.getElementById("btn-batch").onclick = async () => {
 };
 
 /* ---------- errors / misc ---------- */
-function hideSummary() { document.getElementById("summary").classList.add("hidden"); updateDrawerLauncher(); }
+function hideSummary() {
+  document.getElementById("summary").classList.add("hidden");
+  if (stepsEl) { stepsEl.classList.add("hidden"); stepsEl.innerHTML = ""; }
+  currentSteps = []; navIdx = 0;
+  updateDrawerLauncher();
+}
 function showError(msg) { const e = document.getElementById("error"); e.textContent = msg; e.classList.remove("hidden"); }
 function clearError() { document.getElementById("error").classList.add("hidden"); }
 function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
@@ -682,10 +826,22 @@ function updateDrawerLauncher() {
   const launcher = document.getElementById("drawer-launcher");
   if (!launcher) return;
   const txt = launcher.querySelector(".dl-text");
+  const icon = launcher.querySelector(".dl-icon");
+  // 1) Live navigation: show the upcoming maneuver + distance to it, so the
+  //    collapsed pill is a turn-by-turn HUD with the map fully visible.
+  if (currentSteps.length && navUserPos && navIdx < currentSteps.length) {
+    const s = currentSteps[navIdx];
+    txt.textContent = `${fmtDist(haversine(navUserPos, s.loc))} · ${s.text}`;
+    if (icon) icon.textContent = s.icon;
+    launcher.classList.add("route");
+    return;
+  }
+  if (icon) icon.textContent = "☰";
+  // 2) A computed route with no live position: show its distance · ETA.
   const sum = document.getElementById("summary");
   const big = sum && !sum.classList.contains("hidden") ? sum.querySelector(".big") : null;
   if (big && big.textContent.trim()) {
-    txt.textContent = big.textContent.trim();          // e.g. "12.3 mi · 24 min"
+    txt.textContent = big.textContent.trim();
     launcher.classList.add("route");
   } else {
     const active = document.querySelector(".tab.active");

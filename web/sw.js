@@ -9,7 +9,7 @@
  *  - Live data (/traffic*, /geocode/, /nominatim/, /route/): NETWORK-ONLY —
  *    stale traffic/routing is worse than none; the app already degrades.
  */
-const SHELL_CACHE = "wf-shell-v3";
+const SHELL_CACHE = "wf-shell-v4";
 const TILE_CACHE = "wf-tiles-v1";
 const SHELL_PRECACHE = [
   "/", "/index.html", "/app.js", "/geofence.js", "/style.css",

@@ -170,6 +170,29 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
    hiding the whole top-right stack is safe. */
 body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
 
+/* ---------- "from my location" origin control ---------- */
+.loc-row { display: flex; align-items: center; gap: 8px; }
+.my-loc { flex: 1; padding: 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }
+.my-loc:hover { border-color: var(--accent-2); }
+.my-loc.busy { opacity: .55; cursor: progress; }
+.loc-default { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted);
+  cursor: pointer; white-space: nowrap; }
+.loc-default input { accent-color: var(--accent-2); }
+
+/* ---------- turn-by-turn maneuver list ---------- */
+.steps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.steps-list li { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px;
+  background: var(--panel-2); border-top: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.steps-list li:first-child { border-top: none; }
+.steps-list li:hover { background: var(--panel); }
+.steps-list li.current { background: var(--accent); color: #fff; }
+.steps-list li.current:hover { background: var(--accent); }
+.steps-list .man-ico { flex: none; width: 20px; text-align: center; font-size: 15px; line-height: 1.35; }
+.steps-list .man-dist { color: var(--muted); font-size: 11px; }
+.steps-list li.current .man-dist { color: #dce8f6; }
+
 /* Armed "add stop by clicking" button (Directions tab) */
 .add-stop { padding: 9px; border-radius: 8px; border: 1px dashed var(--line);
   background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }

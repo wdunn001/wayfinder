@@ -55,6 +55,13 @@
         <ul id="search-results" class="search-results hidden"></ul>
       </div>
 
+      <div class="loc-row">
+        <button id="btn-my-location" class="my-loc" title="Use your GPS position as the starting point">📍 From my location</button>
+        <label class="loc-default" title="Start every route from your current location by default">
+          <input type="checkbox" id="chk-from-here" /> Default
+        </label>
+      </div>
+
       <button id="btn-add-stop" class="add-stop">+ Add stop on map</button>
       <div class="hint">Search a place, or press <strong>Add stop on map</strong> then click locations.</div>
 
@@ -76,6 +83,9 @@
       </details>
 
       <div id="summary" class="summary hidden"></div>
+      <!-- Turn-by-turn maneuver list (from OSRM steps). The current step is
+           highlighted and mirrored into the collapsed launcher pill as you move. -->
+      <ol id="steps-list" class="steps-list hidden"></ol>
       <div id="error" class="error hidden"></div>
     </section>
 
