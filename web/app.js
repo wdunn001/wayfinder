@@ -199,6 +199,7 @@ geoCtl.on("geolocate", (e) => {
       originSeeded = true;
       setOrigin(navUserPos[0], navUserPos[1], false).catch(() => {});
     }
+    if (navMode) onNavFix(e);   // update speed/heading/along-route + off-route check
     advanceNav();
   }
 });
@@ -632,7 +633,8 @@ function buildSteps(route) {
   for (const leg of (route.legs || []))
     for (const st of (leg.steps || []))
       if (st.maneuver && st.maneuver.location)
-        out.push({ loc: st.maneuver.location, text: stepInstruction(st), icon: maneuverIcon(st), dist: st.distance || 0 });
+        out.push({ loc: st.maneuver.location, text: stepInstruction(st), icon: maneuverIcon(st),
+                   kind: maneuverKind(st), road: (st.name || "").trim(), dist: st.distance || 0 });
   return out;
 }
 function renderSteps() {
@@ -659,7 +661,8 @@ function advanceNav() {
   if (!currentSteps.length || !navUserPos) return;
   while (navIdx < currentSteps.length - 1 && haversine(navUserPos, currentSteps[navIdx].loc) < 30) navIdx++;
   highlightStep();
-  updateDrawerLauncher();
+  if (navMode) schedulePrompts();
+  updateHeader();
 }
 
 /* ---------- "from my location" origin ---------- */
@@ -840,56 +843,370 @@ function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&a
  * active tab). This is the surface turn-by-turn will populate next: while
  * navigating, the collapsed pill can show the next maneuver so the map stays
  * unobstructed. */
-function updateDrawerLauncher() {
-  const launcher = document.getElementById("drawer-launcher");
-  if (!launcher) return;
-  const txt = launcher.querySelector(".dl-text");
-  const icon = launcher.querySelector(".dl-icon");
-  // 1) Live navigation: show the upcoming maneuver + distance to it, so the
-  //    collapsed pill is a turn-by-turn HUD with the map fully visible.
-  if (currentSteps.length && navUserPos && navIdx < currentSteps.length) {
-    const s = currentSteps[navIdx];
-    txt.textContent = `${fmtDist(haversine(navUserPos, s.loc))} · ${s.text}`;
-    if (icon) icon.textContent = s.icon;
-    launcher.classList.add("route");
+/* ===================================================================
+ * ACTIVE NAVIGATION + VOICE
+ * =================================================================== */
+
+/* ---------- nav state ---------- */
+let navMode = false, navRAF = 0, wakeLock = null, puckMarker = null;
+let routeLine = null, routeCum = null, routeTotal = 0;
+let navS = 0, navSpeed = 0, navHeading = 0, navLastFixS = 0, navLastFixT = 0;
+let offRouteCount = 0, rerouting = false;
+let promptFired = { idx: -1 };
+
+/* ---------- imperial formatting (nav HUD + voice) ---------- */
+const ftRound = (ft) => (ft < 200 ? Math.round(ft / 10) * 10 : Math.round(ft / 50) * 50);
+function fmtDistImperialShort(m) {
+  const ft = m * 3.28084;
+  if (ft < 1000) return `${ftRound(ft)} ft`;
+  const mi = m / 1609.344;
+  return `${mi.toFixed(mi < 10 ? 1 : 0)} mi`;
+}
+
+/* ---------- route geometry (snap + interpolate) ---------- */
+function bearingDeg(a, b) { // a,b = [lng,lat]
+  const rad = Math.PI / 180, y = Math.sin((b[0] - a[0]) * rad) * Math.cos(b[1] * rad);
+  const x = Math.cos(a[1] * rad) * Math.sin(b[1] * rad) - Math.sin(a[1] * rad) * Math.cos(b[1] * rad) * Math.cos((b[0] - a[0]) * rad);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function setRouteLine(coords) {
+  routeLine = coords; routeCum = [0]; let acc = 0;
+  for (let i = 1; i < coords.length; i++) { acc += haversine(coords[i - 1], coords[i]); routeCum.push(acc); }
+  routeTotal = acc;
+}
+// Nearest point on segment a-b to p, in a local equirectangular frame around a.
+function nearestOnSeg(p, a, b) {
+  const cos = Math.cos(a[1] * Math.PI / 180);
+  const bx = (b[0] - a[0]) * cos, by = b[1] - a[1];
+  const px = (p[0] - a[0]) * cos, py = p[1] - a[1];
+  const len2 = bx * bx + by * by || 1e-12;
+  let t = (px * bx + py * by) / len2; t = Math.max(0, Math.min(1, t));
+  return { pt: [a[0] + (bx * t) / cos, a[1] + by * t], t };
+}
+function projectToRoute(p) {
+  if (!routeLine) return null;
+  let best = null;
+  for (let i = 1; i < routeLine.length; i++) {
+    const a = routeLine[i - 1], b = routeLine[i], r = nearestOnSeg(p, a, b), d = haversine(p, r.pt);
+    if (!best || d < best.cross)
+      best = { pt: r.pt, s: routeCum[i - 1] + haversine(a, r.pt), bearing: bearingDeg(a, b), cross: d };
+  }
+  return best;
+}
+// Distance-parameterized interpolation along the route (ported from the fleet map).
+function pointAtS(s) {
+  if (!routeLine) return null;
+  s = Math.max(0, Math.min(routeTotal, s));
+  for (let i = 1; i < routeLine.length; i++) {
+    if (routeCum[i] >= s) {
+      const seg = routeCum[i] - routeCum[i - 1] || 1, f = (s - routeCum[i - 1]) / seg, a = routeLine[i - 1], b = routeLine[i];
+      return { pt: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], bearing: bearingDeg(a, b) };
+    }
+  }
+  const n = routeLine.length - 1;
+  return { pt: routeLine[n], bearing: bearingDeg(routeLine[n - 1], routeLine[n]) };
+}
+function alongDistToManeuver() {
+  const st = currentSteps[navIdx]; if (!st) return Infinity;
+  if (routeLine) { const mp = projectToRoute(st.loc); if (mp) return Math.max(0, mp.s - navS); }
+  return navUserPos ? haversine(navUserPos, st.loc) : Infinity;
+}
+
+/* ---------- voice: TTS with pre-synthesis, STT, LLM normalize ---------- */
+let voiceMuted = false;
+try { voiceMuted = localStorage.getItem("wf-voice-muted") === "1"; } catch { /* private mode */ }
+let audioCtx = null, speakChain = Promise.resolve();
+const ttsCache = new Map(); // text -> Promise<AudioBuffer>
+function getAudioCtx() { if (!audioCtx) { const AC = window.AudioContext || window.webkitAudioContext; audioCtx = new AC(); } return audioCtx; }
+async function synthBuffer(text) {
+  const r = await fetch("/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  if (!r.ok) throw new Error("tts " + r.status);
+  const j = await r.json();
+  const bin = atob(j.audio || ""); const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return await getAudioCtx().decodeAudioData(u8.buffer);
+}
+// Pre-fetch+decode ahead of the turn so playback at the threshold is instant.
+function primeSpeech(text) {
+  if (!text) return null;
+  if (!ttsCache.has(text)) ttsCache.set(text, synthBuffer(text).catch((e) => { ttsCache.delete(text); throw e; }));
+  return ttsCache.get(text);
+}
+function speak(text) {
+  if (voiceMuted || !text) return;
+  speakChain = speakChain.then(async () => {
+    try {
+      const ctx = getAudioCtx(); if (ctx.state === "suspended") await ctx.resume();
+      const buffer = await primeSpeech(text);
+      await new Promise((res) => { const s = ctx.createBufferSource(); s.buffer = buffer; s.connect(ctx.destination); s.onended = res; s.start(); });
+    } catch { /* voice is best-effort */ }
+  });
+}
+let mediaRec = null, recStream = null, recChunks = [];
+async function toggleMic(btn) {
+  if (mediaRec && mediaRec.state === "recording") { mediaRec.stop(); return; }
+  try {
+    recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recChunks = []; mediaRec = new MediaRecorder(recStream);
+    mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+    mediaRec.onstop = async () => {
+      btn.classList.remove("recording");
+      recStream && recStream.getTracks().forEach((t) => t.stop());
+      await transcribeAndSearch(new Blob(recChunks, { type: mediaRec.mimeType || "audio/webm" }));
+    };
+    mediaRec.start(); btn.classList.add("recording");
+    setTimeout(() => { if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }, 6000); // safety auto-stop
+  } catch { showError("Microphone unavailable — allow mic access (needs the HTTPS site)."); }
+}
+async function transcribeAndSearch(blob) {
+  try {
+    const fd = new FormData(); fd.append("audio_file", blob, "speech.webm");
+    const r = await fetch("/stt?task=transcribe&output=json&language=en", { method: "POST", body: fd });
+    const j = await r.json();
+    let q = (j.text || "").trim();
+    if (!q) { showError("Didn't catch that — try again."); return; }
+    q = await normalizeQuery(q);
+    const input = document.getElementById("search-input"); if (input) input.value = q;
+    doSearch(q);
+  } catch { showError("Voice search failed."); }
+}
+// gpt-oss extracts a clean place query; 5 s timeout -> fall back to a filler strip.
+async function normalizeQuery(text) {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch("/llm", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
+      body: JSON.stringify({ model: "gpt-oss:20b", stream: false,
+        prompt: `Extract ONLY the destination place name or street address to search for on a map. Reply with just the place, no quotes, no extra words.\n\nRequest: ${text}` }) });
+    clearTimeout(t);
+    if (r.ok) { const j = await r.json(); const out = (j.response || "").trim().replace(/^["']+|["']+$/g, "").split("\n")[0]; if (out) return out; }
+  } catch { /* timeout/offline -> fall back */ }
+  return text.replace(/^(take me to|navigate to|directions to|drive to|go to|find|show me)\s+/i, "").trim();
+}
+
+/* ---------- voice prompt scheduler (imperial, pre-synthesized) ---------- */
+function resetPrompts() { promptFired = { idx: -1 }; }
+function schedulePrompts() {
+  if (!navMode || !currentSteps.length) return;
+  const st = currentSteps[navIdx]; if (!st) return;
+  if (promptFired.idx !== navIdx) promptFired = { idx: navIdx };
+  const d = alongDistToManeuver();
+  const isLast = navIdx === currentSteps.length - 1;
+  const instr = st.text;
+  const arriveMsg = "You have arrived at your destination.";
+  // Pre-synthesize this maneuver's phrases while ~1.3 mi out (covers slow synth).
+  if (d < 2100 && !promptFired.primed) {
+    promptFired.primed = true;
+    primeSpeech(`In 1 mile, ${instr}`); primeSpeech(`In 500 feet, ${instr}`); primeSpeech(isLast ? arriveMsg : instr);
+  }
+  if (!promptFired.mile && st.dist > 1800 && d <= 1609 && d > 550) { promptFired.mile = true; speak(`In 1 mile, ${instr}`); }
+  if (!promptFired.near && d <= 168 && d > 40) { promptFired.near = true; speak(`In 500 feet, ${instr}`); }
+  if (!promptFired.now && d <= 40) { promptFired.now = true; speak(isLast ? arriveMsg : instr); }
+}
+
+/* ---------- camera follow (predictive rAF loop) ---------- */
+function setPuck(pt, brg) {
+  if (!puckMarker) {
+    const el = document.createElement("div"); el.className = "nav-puck";
+    el.innerHTML = '<div class="nav-puck-arrow"></div>';
+    puckMarker = new maplibregl.Marker({ element: el, rotationAlignment: "map", pitchAlignment: "map" });
+  }
+  puckMarker.setLngLat(pt).setRotation(brg).addTo(map);
+}
+function navTick() {
+  if (!navMode) { navRAF = 0; return; }
+  // Dead-reckon along the route from the last fix at current speed, glide toward
+  // it, and clamp so we never lead more than ~1.6 s past the last real fix.
+  const now = performance.now();
+  const predicted = navLastFixS + navSpeed * ((now - navLastFixT) / 1000);
+  const maxLead = navLastFixS + navSpeed * 1.6 + 12;
+  navS += (Math.min(predicted, maxLead) - navS) * 0.18;
+  const at = pointAtS(navS);
+  if (at) {
+    const brg = navSpeed > 0.8 ? at.bearing : navHeading;   // freeze heading when stopped
+    const look = pointAtS(navS + Math.min(45, 8 + navSpeed * 4)); // look slightly ahead
+    map.jumpTo({ center: (look ? look.pt : at.pt), bearing: brg, pitch: is3D ? 60 : 0 });
+    setPuck(at.pt, brg);
+  }
+  navRAF = requestAnimationFrame(navTick);
+}
+function onNavFix(e) {
+  if (!navMode || !routeLine) return;
+  const pr = projectToRoute(navUserPos); if (!pr) return;
+  const nowT = performance.now();
+  let sp = (typeof e.coords.speed === "number" && e.coords.speed >= 0) ? e.coords.speed : null;
+  if (sp == null) { const dt = (nowT - navLastFixT) / 1000; if (dt > 0.3 && dt < 15) sp = Math.max(0, (pr.s - navLastFixS) / dt); }
+  if (sp != null) navSpeed = navSpeed ? 0.55 * navSpeed + 0.45 * sp : sp;
+  navHeading = (typeof e.coords.heading === "number" && !isNaN(e.coords.heading)) ? e.coords.heading : pr.bearing;
+  navLastFixS = pr.s; navLastFixT = nowT;
+  if (pr.cross > 45) { offRouteCount++; if (offRouteCount >= 3) reroute(); } else offRouteCount = 0;
+}
+
+/* ---------- start / exit / reroute / wake-lock ---------- */
+async function startNav() {
+  const route = currentRoutes[selectedRouteIdx]; if (!route) return;
+  setRouteLine(route.geometry.coordinates);
+  navMode = true; document.body.classList.add("nav-active");
+  collapseRouteBuilder(); window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(true);
+  try { const c = getAudioCtx(); if (c.state === "suspended") await c.resume(); } catch { /* gesture needed */ }
+  resetPrompts(); offRouteCount = 0; navSpeed = 0;
+  const seed = navUserPos ? projectToRoute(navUserPos) : null;
+  navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
+  try { map.easeTo({ zoom: 17, pitch: is3D ? 60 : 0, duration: 500 }); } catch { /* map not ready */ }
+  acquireWakeLock();
+  try { geoCtl.trigger(); } catch { /* already tracking */ }
+  if (!navRAF) navRAF = requestAnimationFrame(navTick);
+  speak("Starting navigation.");
+  updateHeader();
+}
+function exitNav() {
+  navMode = false; document.body.classList.remove("nav-active");
+  if (navRAF) { cancelAnimationFrame(navRAF); navRAF = 0; }
+  if (puckMarker) { puckMarker.remove(); puckMarker = null; }
+  releaseWakeLock();
+  try { map.easeTo({ bearing: 0, pitch: is3D ? 55 : 0, duration: 500 }); } catch { /* map not ready */ }
+  updateHeader();
+}
+async function reroute() {
+  if (rerouting || !navUserPos || !stops.length) return;
+  rerouting = true; offRouteCount = 0; speak("Rerouting.");
+  try {
+    const dest = stops[stops.length - 1];
+    const r = await fetch(`${OSRM}/route/v1/driving/${navUserPos[0]},${navUserPos[1]};${dest.lng},${dest.lat}?overview=full&geometries=geojson&alternatives=false&steps=true`);
+    const j = await r.json();
+    if (j.code === "Ok" && j.routes && j.routes[0]) {
+      currentRoutes = [j.routes[0]]; selectedRouteIdx = 0;
+      setRouteLine(j.routes[0].geometry.coordinates);
+      renderRoutes(false); renderSteps(); resetPrompts();
+      const pr = projectToRoute(navUserPos); if (pr) { navS = pr.s; navLastFixS = pr.s; }
+      evaluateRoutesTraffic().catch(() => {});
+    }
+  } catch { /* keep the old line; retry on the next off-route fix */ }
+  finally { rerouting = false; }
+}
+async function acquireWakeLock() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch { /* denied */ } }
+function releaseWakeLock() { try { wakeLock && wakeLock.release(); } catch { /* already gone */ } wakeLock = null; }
+document.addEventListener("visibilitychange", () => { if (navMode && document.visibilityState === "visible" && !wakeLock) acquireWakeLock(); });
+
+/* ---------- maneuver kind + inline-SVG icons ---------- */
+function maneuverKind(st) {
+  const m = st.maneuver || {}, mod = m.modifier || "";
+  if (m.type === "arrive") return "arrive";
+  if (m.type === "depart") return "depart";
+  if (m.type === "roundabout" || m.type === "rotary" || m.type === "roundabout turn") return "roundabout";
+  if (m.type === "merge") return "merge";
+  if (m.type === "fork") return "fork";
+  if (m.type === "on ramp" || m.type === "off ramp") return "ramp";
+  if (mod === "uturn") return "uturn";
+  if (mod === "slight left") return "slight-left";
+  if (mod === "slight right") return "slight-right";
+  if (mod === "sharp left") return "sharp-left";
+  if (mod === "sharp right") return "sharp-right";
+  if (mod === "left") return "left";
+  if (mod === "right") return "right";
+  return "straight";
+}
+function maneuverSvg(kind) {
+  const P = {
+    straight: '<path d="M12 21 V6 M7 11 L12 5 L17 11"/>',
+    right: '<path d="M8 21 V13 Q8 9 12 9 H17 M14 6 L18 9 L14 12"/>',
+    "slight-right": '<path d="M9 21 V14 Q9 9 14 7 L18 5 M15 4 L19 5 L18 9"/>',
+    "sharp-right": '<path d="M8 21 V15 Q8 10 13 11 L17 12 M15 7 L18 12 L13 13"/>',
+    uturn: '<path d="M8 21 V12 Q8 6 13 6 Q18 6 18 12 V14 M14 12 L18 15 L21 11"/>',
+    roundabout: '<circle cx="11" cy="13" r="5"/><path d="M11 8 V3 M8 6 L11 3 L14 6"/>',
+    merge: '<path d="M7 21 V13 Q7 9 12 8 M12 3 V13 M9 6 L12 3 L15 6"/>',
+    fork: '<path d="M12 21 V13 M12 13 L7 7 M12 13 L17 7 M5 8 L7 6 L9 9"/>',
+    depart: '<circle cx="12" cy="19" r="2.4"/><path d="M12 16 V5 M8 9 L12 4 L16 9"/>',
+    arrive: '<path d="M12 21 C12 21 6 14 6 9 A6 6 0 1 1 18 9 C18 14 12 21 12 21 Z"/><circle cx="12" cy="9" r="1.9"/>',
+  };
+  const wrap = (inner, flip) =>
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">` +
+    `${flip ? `<g transform="translate(24,0) scale(-1,1)">${inner}</g>` : inner}</svg>`;
+  if (kind === "left") return wrap(P.right, true);
+  if (kind === "slight-left") return wrap(P["slight-right"], true);
+  if (kind === "sharp-left") return wrap(P["sharp-right"], true);
+  if (kind === "ramp") return wrap(P["slight-right"]);
+  return wrap(P[kind] || P.straight);
+}
+
+/* ---------- header (app bar) — idle / route-planned / navigating ---------- */
+const clockAfter = (ms) => new Date(Date.now() + ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+function computeRemaining() {
+  const sel = currentRoutes[selectedRouteIdx];
+  const meters = (routeLine && routeTotal) ? Math.max(0, routeTotal - navS) : (sel ? sel.distance : 0);
+  const full = sel ? (sel._adjusted ?? sel.duration) : 0;
+  const frac = sel && sel.distance ? meters / sel.distance : 1;
+  const secs = full * frac;
+  return { meters, mins: fmtDur(secs), eta: clockAfter(secs * 1000) };
+}
+function updateHeader() {
+  const hud = document.getElementById("hud"); if (!hud) return;
+  const bStart = document.getElementById("btn-start-nav");
+  const bMute = document.getElementById("btn-mute");
+  const bExit = document.getElementById("btn-exit-nav");
+  const bMic = document.getElementById("btn-mic");
+  const hasRoute = currentRoutes.length && currentSteps.length;
+  bStart && bStart.classList.toggle("hidden", !(hasRoute && !navMode));
+  bExit && bExit.classList.toggle("hidden", !navMode);
+  bMute && bMute.classList.toggle("hidden", !navMode);
+  bMic && bMic.classList.toggle("hidden", navMode);
+  if (bMute) { bMute.textContent = voiceMuted ? "🔇" : "🔊"; bMute.classList.toggle("muted", voiceMuted); }
+
+  if (navMode && currentSteps[navIdx]) {
+    const s = currentSteps[navIdx], d = alongDistToManeuver(), rem = computeRemaining();
+    hud.className = "hud nav";
+    hud.innerHTML =
+      `<span class="hud-man">${maneuverSvg(s.kind)}</span>` +
+      `<span class="hud-main"><span class="hud-dist">${fmtDistImperialShort(d)}</span>` +
+      `<span class="hud-street">${escapeHtml(s.road || s.text)}</span></span>` +
+      `<span class="hud-eta"><span class="eta-clock">${rem.eta}</span><span class="eta-sub">${rem.mins} · ${fmtDistImperialShort(rem.meters)}</span></span>`;
     return;
   }
-  if (icon) icon.textContent = "☰";
-  // 2) A computed route with no live position: show its distance · ETA.
-  const sum = document.getElementById("summary");
-  const big = sum && !sum.classList.contains("hidden") ? sum.querySelector(".big") : null;
-  if (big && big.textContent.trim()) {
-    txt.textContent = big.textContent.trim();
-    launcher.classList.add("route");
-  } else {
-    const active = document.querySelector(".tab.active");
-    txt.textContent = active && active.dataset.tab === "layers" ? "Geofence layers" : "Directions & layers";
-    launcher.classList.remove("route");
+  if (hasRoute) {
+    const sel = currentRoutes[selectedRouteIdx], secs = sel._adjusted ?? sel.duration;
+    hud.className = "hud summary";
+    hud.innerHTML =
+      `<span class="hud-main"><span class="hud-dist">${fmtDistImperialShort(sel.distance)} · ${fmtDur(secs)}</span>` +
+      `<span class="hud-street">Arrive ${clockAfter(secs * 1000)}</span></span>`;
+    return;
   }
+  hud.className = "hud";
+  const active = document.querySelector(".tab.active");
+  hud.innerHTML = `<span class="hud-title">${active && active.dataset.tab === "layers" ? "Geofence layers" : "Wayfinder"}</span>`;
 }
+// Back-compat alias: earlier call sites still call updateDrawerLauncher().
+function updateDrawerLauncher() { updateHeader(); }
+
+/* ---------- app-bar controls ---------- */
+(function initAppbar() {
+  const burger = document.getElementById("btn-burger");
+  burger && burger.addEventListener("click", () => window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(!window.wfDrawerCollapsed()));
+  const bStart = document.getElementById("btn-start-nav"); bStart && bStart.addEventListener("click", () => startNav());
+  const bExit = document.getElementById("btn-exit-nav"); bExit && bExit.addEventListener("click", () => exitNav());
+  const bMic = document.getElementById("btn-mic"); bMic && bMic.addEventListener("click", () => toggleMic(bMic));
+  const bMute = document.getElementById("btn-mute"); bMute && bMute.addEventListener("click", () => {
+    voiceMuted = !voiceMuted; try { localStorage.setItem("wf-voice-muted", voiceMuted ? "1" : "0"); } catch { /* private mode */ }
+    updateHeader(); if (!voiceMuted) speak("Voice on.");
+  });
+})();
 
 (function initDrawer() {
   const panel = document.getElementById("panel");
-  const launcher = document.getElementById("drawer-launcher");
   const collapseBtn = document.getElementById("btn-collapse");
-  if (!panel || !launcher || !collapseBtn) return;
+  if (!panel) return;
   const KEY = "wf-drawer-collapsed";
 
   function setCollapsed(collapsed, persist = true) {
     panel.classList.toggle("collapsed", collapsed);
-    launcher.classList.toggle("hidden", !collapsed);
-    collapseBtn.setAttribute("aria-expanded", String(!collapsed));
-    if (collapsed) updateDrawerLauncher();
+    collapseBtn && collapseBtn.setAttribute("aria-expanded", String(!collapsed));
     if (persist) { try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch { /* private mode */ } }
   }
   window.wfSetDrawerCollapsed = setCollapsed;
   window.wfDrawerCollapsed = () => panel.classList.contains("collapsed");
 
-  collapseBtn.addEventListener("click", () => setCollapsed(true));
-  launcher.addEventListener("click", () => setCollapsed(false));
+  collapseBtn && collapseBtn.addEventListener("click", () => setCollapsed(true)); // app-bar burger reopens it
 
   // Honor the saved preference; with none, default collapsed on phones so the
-  // drawer never eats the map on first load (the reason for this change).
+  // drawer never eats the map on first load.
   let start = null;
   try { start = localStorage.getItem(KEY); } catch { /* private mode */ }
   if (start === null) start = window.matchMedia("(max-width: 640px)").matches ? "1" : "0";

@@ -21,14 +21,19 @@
        on the map): every Terra Draw mode + select/edit + delete + download +
        distance/area measurement. Mounted from geofence.js. -->
 
-  <!-- Collapsed-state launcher: a compact pill that shows summary data (route
-       ETA/distance, or the active tab) and reopens the drawer. Kept OUTSIDE the
-       drawer so it stays on-screen when the drawer slides away. This is also
-       where the live turn-by-turn "next maneuver" summary will surface. -->
-  <button id="drawer-launcher" class="drawer-launcher hidden" aria-label="Open panel">
-    <span class="dl-icon">☰</span>
-    <span class="dl-text">Directions &amp; layers</span>
-  </button>
+  <!-- Full-width top app bar: burger opens the drawer; the HUD is the primary
+       nav surface (maneuver icon + distance-to-turn + next street + ETA); the
+       right controls change by state (mic / Start / mute + Exit while driving). -->
+  <header id="appbar" class="appbar">
+    <button id="btn-burger" class="burger" aria-label="Open menu" title="Menu">☰</button>
+    <div id="hud" class="hud"><span class="hud-title">Wayfinder</span></div>
+    <div class="appbar-ctl">
+      <button id="btn-mic" class="ab-btn" title="Voice search" aria-label="Voice search">🎤</button>
+      <button id="btn-start-nav" class="ab-btn primary hidden" title="Start navigation">▶ Start</button>
+      <button id="btn-mute" class="ab-btn hidden" title="Mute voice" aria-label="Mute voice">🔊</button>
+      <button id="btn-exit-nav" class="ab-btn danger hidden" title="End navigation">✕ Exit</button>
+    </div>
+  </header>
 
   <aside id="panel" class="panel drawer">
     <header class="panel-head">

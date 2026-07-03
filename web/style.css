@@ -9,14 +9,58 @@
   --accent-2: #1e88e5;
   --danger: #c62828;
   --ok: #2e7d32;
+  --appbar-h: 52px;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); }
 #map { position: absolute; inset: 0; background: #0e1216; }
 
+/* ---------- full-width top app bar (nav HUD + burger) ---------- */
+.appbar {
+  position: absolute; top: 0; left: 0; right: 0; height: var(--appbar-h); z-index: 7;
+  display: flex; align-items: center; gap: 8px; padding: 0 8px;
+  background: var(--panel); border-bottom: 1px solid var(--line);
+  box-shadow: 0 2px 14px rgba(0,0,0,.35);
+}
+.burger { flex: none; width: 38px; height: 38px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  font-size: 18px; line-height: 1; display: grid; place-items: center; }
+.burger:hover { border-color: var(--accent-2); }
+.hud { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; overflow: hidden; }
+.hud-title { font-size: 15px; font-weight: 700; letter-spacing: .2px; }
+/* Nav HUD: big maneuver icon + distance-to-turn + street, ETA to the right. */
+.hud-man { flex: none; width: 34px; height: 34px; display: grid; place-items: center; color: #fff; }
+.hud-man svg { width: 30px; height: 30px; }
+.hud-main { flex: 1; min-width: 0; line-height: 1.15; }
+.hud-dist { font-size: 18px; font-weight: 800; }
+.hud-street { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-eta { flex: none; text-align: right; line-height: 1.15; }
+.hud-eta .eta-clock { font-size: 15px; font-weight: 700; }
+.hud-eta .eta-sub { font-size: 11px; color: var(--muted); }
+.hud.summary .hud-dist { font-size: 15px; }
+.appbar-ctl { flex: none; display: flex; align-items: center; gap: 6px; }
+.ab-btn { height: 36px; padding: 0 10px; border-radius: 9px; cursor: pointer; font-size: 13px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text); white-space: nowrap; }
+.ab-btn:hover { border-color: var(--accent-2); }
+.ab-btn.primary { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 700; }
+.ab-btn.danger { border-color: var(--danger); color: #ffb4b4; }
+.ab-btn.recording { background: var(--danger); color: #fff; border-color: var(--danger); }
+.ab-btn.muted { color: var(--muted); }
+.ab-btn.hidden { display: none; }
+
+/* Custom heading puck used during navigation (geoCtl dot hidden then). */
+.nav-puck { width: 22px; height: 22px; }
+.nav-puck-arrow { width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent;
+  border-bottom: 20px solid var(--accent-2); filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); }
+body.nav-active .maplibregl-user-location-dot,
+body.nav-active .maplibregl-user-location-accuracy-circle { display: none; }
+
+/* Keep MapLibre's top-right controls (Terra Draw) below the app bar. */
+.maplibregl-ctrl-top-right { margin-top: var(--appbar-h); }
+
 /* ---------- left drawer ---------- */
 .panel {
-  position: absolute; top: 0; left: 0; bottom: 0; z-index: 5;
+  position: absolute; top: var(--appbar-h); left: 0; bottom: 0; z-index: 5;
   width: 360px; max-width: 92vw;
   display: flex; flex-direction: column; gap: 10px; overflow: hidden;
   background: var(--panel); border-right: 1px solid var(--line);
@@ -46,20 +90,8 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 .route-builder > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
 .route-builder[open] > summary::before { transform: rotate(90deg); }
 .rb-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-/* Collapsed: slide fully off the left edge; the launcher pill takes over. */
+/* Collapsed: slide fully off the left edge; the app-bar burger reopens it. */
 .panel.collapsed { transform: translateX(-101%); }
-
-/* Compact launcher shown while the drawer is collapsed — summary + reopen. */
-.drawer-launcher {
-  position: absolute; top: 12px; left: 12px; z-index: 6;
-  display: inline-flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
-  padding: 9px 13px; border-radius: 22px; cursor: pointer;
-  background: var(--panel); color: var(--text); border: 1px solid var(--line);
-  box-shadow: 0 8px 24px rgba(0,0,0,.45); font-size: 13px; font-weight: 600;
-}
-.drawer-launcher .dl-icon { font-size: 15px; line-height: 1; }
-.drawer-launcher .dl-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.drawer-launcher.route { border-color: var(--accent-2); }
 
 .panel-head { display: flex; align-items: center; gap: 8px; }
 .panel-head h1 { font-size: 15px; margin: 0; letter-spacing: .2px; flex: 1; }
@@ -226,5 +258,9 @@ body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
   .panel-head { flex-wrap: wrap; }
   .panel-head h1 { flex: 1 1 auto; }
   .basemap { flex: 1 0 100%; justify-content: flex-start; }
-  .drawer-launcher { top: 10px; left: 10px; padding: 10px 14px; }
+  /* On phones the app bar is the primary surface — give the HUD room and shrink
+     idle controls; the mic/Start/mute/Exit stay reachable. */
+  .appbar { padding: 0 6px; gap: 6px; }
+  .hud-dist { font-size: 17px; }
+  .ab-btn { padding: 0 8px; }
 }
