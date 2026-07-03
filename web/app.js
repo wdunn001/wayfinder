@@ -167,6 +167,17 @@ const map = new maplibregl.Map({
   zoom: 4,
 });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+// HTML5 Geolocation (GPS) + DeviceOrientation (magnetometer) via the built-in
+// control: click to locate, click again to follow; the heading cone appears on
+// devices that expose orientation data. Requires the HTTPS origin
+// (maps.quasarke.net) — browsers block geolocation on plain http.
+map.addControl(new maplibregl.GeolocateControl({
+  positionOptions: { enableHighAccuracy: true, timeout: 10000 },
+  trackUserLocation: true,
+  showUserLocation: true,
+  showAccuracyCircle: true,
+  showUserHeading: true,
+}), "bottom-right");
 map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left");
 
 // Exposed for the geofence-layers ES module (geofence.js), which owns drawing + persistence.
@@ -193,16 +204,17 @@ map.on("load", () => {
     layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": "#0d1b2a", "line-width": 8, "line-opacity": 0.45 } });
   // The route is drawn as SEGMENTS colored by live congestion (from the same
-  // TomTom flow samples that adjust the ETA): blue = free flow / no data,
-  // amber = slowdown, red = jam. This way the route line SHOWS the traffic
-  // instead of covering the overlay under it.
+  // TomTom flow samples that adjust the ETA): GREEN = confirmed free flow,
+  // amber = slowdown, red = jam, blue = no data (unknown ≠ known good). This
+  // way the route line SHOWS the traffic instead of covering the overlay.
   map.addLayer({ id: "route-line", type: "line", source: "route",
     layout: { "line-cap": "round", "line-join": "round" },
     paint: {
       "line-color": ["match", ["get", "cong"],
+        "free", "#43a047",
         "slow", "#f9a825",
         "jam", "#e53935",
-        /* free / no data */ "#1e88e5"],
+        /* none / no data */ "#1e88e5"],
       "line-width": 5, "line-opacity": 0.9,
     } });
   // Click a grey alternative to make it the active route.
@@ -570,7 +582,8 @@ async function evaluateRoutesTraffic() {
 function routeSegments(route) {
   const geom = route.geometry;
   const s = route._samples;
-  if (!s || !s.length) return [{ type: "Feature", geometry: geom, properties: { cong: "free" } }];
+  // No flow data -> "none" (blue). Green is reserved for CONFIRMED free flow.
+  if (!s || !s.length) return [{ type: "Feature", geometry: geom, properties: { cong: "none" } }];
   const cs = geom.coordinates;
   const cls = (r) => (r < 0.6 ? "jam" : r < 0.85 ? "slow" : "free");
   const feats = [];
