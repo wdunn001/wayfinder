@@ -5,11 +5,19 @@
 
 const GEOCODE = "/geocode";
 const OSRM = "/route";
+// VECTOR + raster-DEM tiles are fetched inside MapLibre's Web Worker, which has
+// no document base — a RELATIVE url ("/martin/…") throws "Failed to construct
+// Request: Failed to parse URL" in the worker, so the vector `buildings` layer,
+// hillshade, and terrain never loaded (this is why 3D buildings never appeared).
+// Raster image tiles load on the main thread, so those tolerated relative urls.
+// Make worker-loaded sources ABSOLUTE via location.origin (portable across the
+// LAN split-horizon, the public host, and the :8442 direct port).
+const ORIGIN = location.origin;
 const TILE = {
   street: "/tiles/osm/{z}/{x}/{y}.png",
   satellite: "/tiles/esri-imagery/{z}/{y}/{x}",
-  vector: "/martin/planet/{z}/{x}/{y}",   // Martin planet vector (incl. `buildings` layer)
-  terrain: "/martin/terrarium/{z}/{x}/{y}", // Martin terrarium-encoded DEM (3D terrain + hillshade)
+  vector: ORIGIN + "/martin/planet/{z}/{x}/{y}",   // Martin planet vector (incl. `buildings` layer)
+  terrain: ORIGIN + "/martin/terrarium/{z}/{x}/{y}", // Martin terrarium DEM (3D terrain + hillshade)
 };
 const STOP_COLORS = ["#1565c0","#c62828","#2e7d32","#ef6c00","#6a1b9a","#00838f","#ad1457","#558b2f"];
 const colorFor = (i) => STOP_COLORS[((i % STOP_COLORS.length) + STOP_COLORS.length) % STOP_COLORS.length];
