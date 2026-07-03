@@ -17,7 +17,7 @@ const TILE = {
   street: "/tiles/osm/{z}/{x}/{y}.png",
   satellite: "/tiles/esri-imagery/{z}/{y}/{x}",
   vector: ORIGIN + "/martin/planet/{z}/{x}/{y}",   // Martin planet vector (incl. `buildings` layer)
-  terrain: ORIGIN + "/martin/terrarium/{z}/{x}/{y}", // Martin terrarium DEM (3D terrain + hillshade)
+  terrain: ORIGIN + "/terrarium/{z}/{x}/{y}.png",  // real AWS/Mapzen terrarium DEM (z0-15) via nginx
 };
 const STOP_COLORS = ["#1565c0","#c62828","#2e7d32","#ef6c00","#6a1b9a","#00838f","#ad1457","#558b2f"];
 const colorFor = (i) => STOP_COLORS[((i % STOP_COLORS.length) + STOP_COLORS.length) % STOP_COLORS.length];
@@ -160,14 +160,14 @@ const map = new maplibregl.Map({
       // height/min_height, used by the 3D fill-extrusion layer below.
       "mz-vector": { type: "vector", tiles: [TILE.vector], minzoom: 0, maxzoom: 15,
         attribution: "&copy; OpenStreetMap, Protomaps (self-hosted)" },
-      // Terrarium-encoded DEM (z0-9 overview bake). Two identical sources on
-      // purpose: MapLibre explicitly warns against sharing one raster-dem
-      // between setTerrain and a hillshade layer (duplicated request/cancel
-      // churn + reduced rendering quality).
+      // Real terrarium-encoded DEM (AWS/Mapzen Terrain Tiles, z0-15). Two
+      // identical sources on purpose: MapLibre explicitly warns against sharing
+      // one raster-dem between setTerrain and a hillshade layer (duplicated
+      // request/cancel churn + reduced rendering quality).
       "mz-terrain": { type: "raster-dem", tiles: [TILE.terrain], tileSize: 256, encoding: "terrarium",
-        maxzoom: 9, attribution: "Elevation &copy; Mapzen / AWS Terrain Tiles" },
+        maxzoom: 14, attribution: "Elevation &copy; Mapzen / AWS Terrain Tiles" },
       "mz-terrain-hs": { type: "raster-dem", tiles: [TILE.terrain], tileSize: 256, encoding: "terrarium",
-        maxzoom: 9 },
+        maxzoom: 14 },
     },
     layers: [{ id: "base", type: "raster", source: "street" }],
   },
@@ -261,12 +261,10 @@ map.on("load", () => {
   map.on("mouseenter", "route-alts", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "route-alts", () => { map.getCanvas().style.cursor = ""; });
 
-  // Hillshade relief from the terrarium DEM — hidden until 3D is on (no-op until the DEM is baked).
-  // NOTE: the baked terrarium DEM is a z0-9 world overview (higher zooms 404),
-  // so relief is coarse — exaggerate harder so it actually reads on screen.
+  // Hillshade relief from the real terrarium DEM (z0-15) — hidden until 3D is on.
   // Uses its own DEM source (mz-terrain-hs) — never share with setTerrain.
   map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain-hs",
-    layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.75 } }, "route-line");
+    layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.45 } }, "route-line");
 
   // 3D building extrusions from Martin's planet `buildings` layer — hidden until 3D is on.
   // Inserted beneath route-line so routes stay visible over the buildings.
