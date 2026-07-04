@@ -876,6 +876,7 @@ function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 
 /* ---------- nav state ---------- */
 let navMode = false, navRAF = 0, wakeLock = null, puckMarker = null;
+let following = true, followLocked = false;   // camera follow: user can pan out (unless locked), then Re-center
 let routeLine = null, routeCum = null, routeTotal = 0;
 let navS = 0, navSpeed = 0, navHeading = 0, navLastFixS = 0, navLastFixT = 0;
 let offRouteCount = 0, rerouting = false;
@@ -1177,12 +1178,32 @@ function navTick() {
   const at = pointAtS(navS);
   if (at) {
     const brg = moving ? at.bearing : navHeading;              // freeze heading when stopped
-    const lead = moving ? Math.min(45, navSpeed * 4) : 0;      // camera only leads while moving
-    const look = lead ? pointAtS(navS + lead) : at;
-    map.jumpTo({ center: (look ? look.pt : at.pt), bearing: brg, pitch: is3D ? 60 : 0 });
-    setPuck(at.pt, brg);
+    setPuck(at.pt, brg);                                        // puck always tracks, even when not following
+    if (following) {
+      const lead = moving ? Math.min(45, navSpeed * 4) : 0;    // camera only leads while moving
+      const look = lead ? pointAtS(navS + lead) : at;
+      map.jumpTo({ center: (look ? look.pt : at.pt), bearing: brg, pitch: is3D ? 60 : 0 });
+    }
   }
   navRAF = requestAnimationFrame(navTick);
+}
+// User panned/zoomed/rotated by hand → stop following (unless locked); show Re-center.
+function breakFollow() {
+  if (!navMode || followLocked || !following) return;
+  following = false;
+  const b = document.getElementById("btn-recenter"); if (b) b.classList.remove("hidden");
+}
+function recenter() {
+  following = true;
+  const b = document.getElementById("btn-recenter"); if (b) b.classList.add("hidden");
+  try { map.jumpTo({ zoom: 18.5, pitch: is3D ? 60 : 0 }); } catch { /* map busy */ }
+}
+function toggleFollowLock(btn) {
+  followLocked = !followLocked;
+  btn.textContent = followLocked ? "🔒" : "🔓";
+  btn.title = followLocked ? "Follow locked — tap to unlock" : "Lock follow (ignore accidental pans)";
+  btn.classList.toggle("locked", followLocked);
+  if (followLocked) recenter();   // locking re-engages follow immediately
 }
 function onNavFix(e) {
   if (!navMode || !routeLine) return;
@@ -1204,6 +1225,14 @@ async function startNav() {
   collapseRouteBuilder(); window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(true);
   try { const c = getAudioCtx(); if (c.state === "suspended") await c.resume(); } catch { /* gesture needed */ }
   resetPrompts(); primeFragments(); offRouteCount = 0; navSpeed = 0;   // pre-synth the fixed phrase clips
+  following = true;
+  const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
+  // One-time: a real user gesture (has originalEvent) breaks follow; our own
+  // per-frame jumpTo has no originalEvent so it won't trigger it.
+  if (!startNav._gestures) {
+    startNav._gestures = true;
+    ["dragstart", "rotatestart", "zoomstart", "pitchstart"].forEach((ev) => map.on(ev, (e) => { if (e.originalEvent) breakFollow(); }));
+  }
   const seed = navUserPos ? projectToRoute(navUserPos) : null;
   navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
   // jumpTo (instant), NOT easeTo: the follow loop's per-frame jumpTo omits zoom,
@@ -1217,9 +1246,10 @@ async function startNav() {
   updateHeader();
 }
 function exitNav() {
-  navMode = false; document.body.classList.remove("nav-active");
+  navMode = false; following = true; document.body.classList.remove("nav-active");
   if (navRAF) { cancelAnimationFrame(navRAF); navRAF = 0; }
   if (puckMarker) { puckMarker.remove(); puckMarker = null; }
+  const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
   releaseWakeLock();
   try { map.easeTo({ bearing: 0, pitch: is3D ? 55 : 0, duration: 500 }); } catch { /* map not ready */ }
   updateHeader();
@@ -1303,11 +1333,14 @@ function updateHeader() {
   const bExit = document.getElementById("btn-exit-nav");
   const bMic = document.getElementById("btn-mic");
   const hasRoute = currentRoutes.length && currentSteps.length;
+  const bLock = document.getElementById("btn-lock");
   bStart && bStart.classList.toggle("hidden", !(hasRoute && !navMode));
   bExit && bExit.classList.toggle("hidden", !navMode);
   bMute && bMute.classList.toggle("hidden", !navMode);
+  bLock && bLock.classList.toggle("hidden", !navMode);
   bMic && bMic.classList.toggle("hidden", navMode);
   if (bMute) { bMute.textContent = voiceMuted ? "🔇" : "🔊"; bMute.classList.toggle("muted", voiceMuted); }
+  if (!navMode) { const bRe = document.getElementById("btn-recenter"); if (bRe) bRe.classList.add("hidden"); }
 
   if (navMode && currentSteps[navIdx]) {
     const s = currentSteps[navIdx], d = alongDistToManeuver(), rem = computeRemaining();
@@ -1345,6 +1378,8 @@ function updateDrawerLauncher() { updateHeader(); }
     voiceMuted = !voiceMuted; try { localStorage.setItem("wf-voice-muted", voiceMuted ? "1" : "0"); } catch { /* private mode */ }
     updateHeader(); if (!voiceMuted) speak("Voice on.");
   });
+  const bLock = document.getElementById("btn-lock"); bLock && bLock.addEventListener("click", () => toggleFollowLock(bLock));
+  const bRe = document.getElementById("btn-recenter"); bRe && bRe.addEventListener("click", () => recenter());
 })();
 
 (function initDrawer() {

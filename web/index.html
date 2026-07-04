@@ -31,9 +31,13 @@
       <button id="btn-mic" class="ab-btn" title="Voice search" aria-label="Voice search">🎤</button>
       <button id="btn-start-nav" class="ab-btn primary hidden" title="Start navigation">▶ Start</button>
       <button id="btn-mute" class="ab-btn hidden" title="Mute voice" aria-label="Mute voice">🔊</button>
+      <button id="btn-lock" class="ab-btn hidden" title="Lock follow (ignore accidental pans)" aria-label="Lock follow">🔓</button>
       <button id="btn-exit-nav" class="ab-btn danger hidden" title="End navigation">✕ Exit</button>
     </div>
   </header>
+
+  <!-- Shown while navigating if you pan/zoom the map by hand: resume camera follow. -->
+  <button id="btn-recenter" class="recenter hidden">◎ Re-center</button>
 
   <aside id="panel" class="panel drawer">
     <header class="panel-head">
