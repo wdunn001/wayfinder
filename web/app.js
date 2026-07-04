@@ -990,24 +990,81 @@ async function transcribeAndSearch(blob) {
     const fd = new FormData(); fd.append("audio_file", blob, "speech.webm");
     const r = await fetch("/stt?task=transcribe&output=json&language=en", { method: "POST", body: fd });
     const j = await r.json();
-    let q = (j.text || "").trim();
-    if (!q) { showError("Didn't catch that — try again."); return; }
-    q = await normalizeQuery(q);
-    const input = document.getElementById("search-input"); if (input) input.value = q;
-    doSearch(q);
+    const text = (j.text || "").trim();
+    if (!text) { showError("Didn't catch that — try again."); return; }
+    const input = document.getElementById("search-input"); if (input) input.value = text;
+    await handleVoiceCommand(text, await parseVoiceCommand(text));
   } catch { showError("Voice search failed."); }
 }
-// gpt-oss extracts a clean place query; 5 s timeout -> fall back to a filler strip.
-async function normalizeQuery(text) {
+// Local intent parser (instant, no network): action (navigate vs search),
+// category (via synonymCat), nearest, along-route. Handles the common commands
+// even when the LLM is slow/offline.
+function parseVoiceLocal(text) {
+  const s = " " + text.toLowerCase().replace(/[?.!,]+/g, " ") + " ";
+  const navigate = /\b(directions?|navigate|take me|drive|go to|route to|get me|bring me|head to|nav to)\b/.test(s);
+  const nearest = /\b(nearest|closest|near me|nearby|around here)\b/.test(s);
+  const along = /\b(on my way|along (the |my )?route|on the way)\b/.test(s);
+  let q = s
+    .replace(/\b(hey |ok |okay )?(can you |could you |would you |please )?/g, "")
+    .replace(/\b(get |give me |find me |show me )?(me )?(directions?|navigation)( to| for)?\b/g, "")
+    .replace(/\b(navigate|take me|drive|go|route|head|bring me|nav)( to| me to)?\b/g, "")
+    .replace(/\b(find|search for|where('?s| is| are)|locate)\b/g, "")
+    .replace(/\b(the|a|an)\b/g, "")
+    .replace(/\b(nearest|closest|nearby)\b/g, "")
+    .replace(/\b(near me|around here|on my way|along( the| my)? route|on the way)\b/g, "")
+    .replace(/\s+/g, " ").trim();
+  const category = synonymCat(q) || synonymCat(q.replace(/\bstation\b/, "").trim()) || synonymCat(q.replace(/s$/, "")) || null;
+  return { action: navigate ? "navigate" : "search", category, query: category ? null : q, nearest, along_route: along };
+}
+// gpt-oss refines the parse (better on odd phrasings); 4.5 s timeout → local.
+async function parseVoiceCommand(text) {
+  const local = parseVoiceLocal(text);
   try {
-    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4500);
+    const prompt = `Parse this map/navigation request. Reply with JSON only.\n` +
+      `Fields: "action" ("navigate" if they want directions/routing e.g. take me, drive to, get directions, go to; else "search"), ` +
+      `"category" (one of fuel,food,coffee,ev,grocery,pharmacy,atm,hotel,parking,hospital for a generic place type, else null), ` +
+      `"query" (specific place name or address if not a category, else null), ` +
+      `"nearest" (true if nearest/closest/near me), "along_route" (true if on my way/along route).\n` +
+      `Request: "${text}"`;
     const r = await fetch("/llm", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
-      body: JSON.stringify({ model: "gpt-oss:20b", stream: false,
-        prompt: `Extract ONLY the destination place name or street address to search for on a map. Reply with just the place, no quotes, no extra words.\n\nRequest: ${text}` }) });
+      body: JSON.stringify({ model: "gpt-oss:20b", stream: false, format: "json", prompt }) });
     clearTimeout(t);
-    if (r.ok) { const j = await r.json(); const out = (j.response || "").trim().replace(/^["']+|["']+$/g, "").split("\n")[0]; if (out) return out; }
-  } catch { /* timeout/offline -> fall back */ }
-  return text.replace(/^(take me to|navigate to|directions to|drive to|go to|find|show me)\s+/i, "").trim();
+    if (r.ok) {
+      const p = JSON.parse((await r.json()).response || "{}");
+      const cat = (p.category && catOf(p.category)) ? p.category : local.category;
+      return { action: p.action === "navigate" ? "navigate" : (local.action), category: cat,
+        query: cat ? null : (p.query || local.query), nearest: !!p.nearest || local.nearest, along_route: !!p.along_route || local.along_route };
+    }
+  } catch { /* timeout/offline → local parse */ }
+  return local;
+}
+// Act on a parsed voice command.
+async function handleVoiceCommand(text, cmd) {
+  const navigate = cmd.action === "navigate";
+  if (cmd.category) {
+    const along = cmd.along_route || (navMode && !!routeLine);
+    await runPlaceSearch({ cat: cmd.category, along });
+    const kind = catOf(cmd.category).label.split(" ")[1].toLowerCase();
+    if (!placesResults.length) { speak(`I couldn't find any ${kind} ${along ? "along your route" : "nearby"}.`); return; }
+    if (navigate) { speak(`Getting directions to ${placesResults[0].name}.`); routeToPoint(placesResults[0]); }
+    else speak(`Found ${placesResults.length} ${kind} ${along ? "along your route" : "nearby"}.`);
+    return;
+  }
+  const q = cmd.query || text;
+  const res = await geocodeForward(q, 1).catch(() => []);
+  if (!res[0]) { doSearch(q); speak(`Searching for ${q}.`); return; }
+  if (navigate) { speak(`Getting directions to ${res[0].label}.`); routeToPoint(res[0]); }
+  else { lastResults = res; renderResults(); }
+}
+// Route from my location (seeded if needed) to a {lat,lng,name|label} point.
+function routeToPoint(p) {
+  const label = p.name || p.label || "Destination";
+  if (!stops.length && navUserPos) stops.push({ localId: newId(), lat: navUserPos[1], lng: navUserPos[0], label: "My location", origin: true });
+  stops.push({ localId: newId(), lat: p.lat, lng: p.lng, label });
+  clearError(); render();
+  if (stops.length >= 2) document.getElementById("btn-route").click();
+  else showError("Allow location or add a starting point, then press Directions.");
 }
 
 /* ---------- voice prompt scheduler (imperial, pre-synthesized) ---------- */
@@ -1454,12 +1511,7 @@ function flyToPlace(i) {
 function directionsToPlace(i) {
   const r = placesResults[i]; if (!r) return;
   if (placePopup) { placePopup.remove(); placePopup = null; }
-  if (!stops.length && navUserPos)
-    stops.push({ localId: newId(), lat: navUserPos[1], lng: navUserPos[0], label: "My location", origin: true });
-  stops.push({ localId: newId(), lat: r.lat, lng: r.lng, label: r.name });
-  clearError(); render();
-  if (stops.length >= 2) document.getElementById("btn-route").click();
-  else showError("Set a starting point (or allow location), then press Directions.");
+  routeToPoint(r);
 }
 function addPlaceAsStop(i) {
   const r = placesResults[i]; if (!r) return;
