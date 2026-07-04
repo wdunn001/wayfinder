@@ -1314,29 +1314,56 @@ function dedupePlaces(list) {
   for (const r of list) { const k = r.id || `${r.lat.toFixed(5)},${r.lng.toFixed(5)}`; if (seen.has(k)) continue; seen.add(k); out.push(r); }
   return out;
 }
-async function findPlaces(cat) {
-  placesActiveCat = cat; renderChips();
-  const { along, pts } = searchCenters();
-  const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = along ? "along your route…" : "near you…";
-  const radius = along ? 2500 : 4000;
-  let res = [];
-  if (overpassOk) { try { res = await queryOverpass(cat, pts, radius); } catch { overpassOk = false; } } // import not done yet → TomTom
-  if (!res.length) { try { res = along ? await queryTomTomMulti(cat, pts, radius) : await queryTomTomAt(cat, pts[0], radius); } catch { /* offline */ } }
-  res = dedupePlaces(res);
-  const origin = navUserPos || pts[0];
-  for (const r of res) {
-    r.dist = haversine(origin, [r.lng, r.lat]);
-    if (along && routeLine) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; }
+// Map common typed words to a clean category (so "gas" → the fuel categorySet,
+// not a noisy fuzzy match); brands/anything else fall through to fuzzy search.
+function synonymCat(q) {
+  const s = (q || "").toLowerCase().trim();
+  const map = {
+    fuel: ["gas", "gasoline", "petrol", "fuel", "diesel", "gas station"],
+    food: ["food", "restaurant", "restaurants", "eat", "dinner", "lunch", "meal"],
+    coffee: ["coffee", "cafe", "café", "espresso", "coffee shop"],
+    ev: ["ev", "charger", "charging", "ev charging", "charge", "charging station"],
+    grocery: ["grocery", "groceries", "supermarket", "market"],
+    pharmacy: ["pharmacy", "drugstore", "chemist"],
+    atm: ["atm", "cash", "cashpoint"],
+    hotel: ["hotel", "motel", "lodging", "hotels"],
+    parking: ["parking", "car park"],
+    hospital: ["hospital", "er", "emergency room", "emergency"],
+  };
+  for (const k in map) if (map[k].includes(s)) return k;
+  return null;
+}
+// Fetch raw results for a set of points: clean category (Overpass→TomTom
+// categorySet) when we have one, else fuzzy free-text (TomTom poiSearch).
+async function fetchPlaces({ cat, query, pts, radius }) {
+  if (cat) {
+    if (overpassOk) { try { const r = await queryOverpass(cat, pts, radius); if (r.length) return r; } catch { overpassOk = false; } }
+    const out = []; for (const p of pts.slice(0, 6)) { try { out.push(...await queryTomTomAt(cat, p, radius)); } catch { /* skip */ } }
+    return out;
   }
-  placesResults = res;
-  sortPlaces();
-  if (ctx) ctx.textContent = res.length ? (along ? `${res.length} along route` : `${res.length} nearby`) : "none found";
+  const out = []; for (const p of pts.slice(0, 6)) { try { out.push(...await tomtomSearchAt(query, p, radius)); } catch { /* skip */ } }
+  return out;
+}
+async function runPlaceSearch({ cat, query, along }) {
+  placesActiveCat = cat; renderChips();
+  const useAlong = along && !!routeLine;
+  const pts = useAlong ? sampleRouteAhead() : [navUserPos || [map.getCenter().lng, map.getCenter().lat]];
+  const radius = useAlong ? 3000 : 5000;
+  const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = "searching…";
+  const res = dedupePlaces(await fetchPlaces({ cat, query, pts, radius }));
+  const origin = navUserPos || pts[0];
+  for (const r of res) { r.dist = haversine(origin, [r.lng, r.lat]); if (useAlong) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; } }
+  placesResults = res; sortPlaces();
+  if (ctx) ctx.textContent = res.length ? `${res.length} ${useAlong ? "along route" : "nearby"}` : "none found";
   const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
-  if (res.length && !navMode) {
+  window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(false);
+  if (res.length && !useAlong) {
     const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
     if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
   }
 }
+// Category chip → along-route while navigating, else near you.
+function findPlaces(cat) { return runPlaceSearch({ cat, along: navMode }); }
 // Free-text place search from the search box ("gas", "coffee", "walmart") — near
 // a point, or along the route ahead. Renders the same pins + picklist as chips.
 async function tomtomSearchAt(query, center, radius) {
@@ -1346,28 +1373,12 @@ async function tomtomSearchAt(query, center, radius) {
   return (j.results || []).map((x) => ({ id: "t" + x.id, name: (x.poi && x.poi.name) || (x.address && x.address.freeformAddress) || "Place",
     lat: x.position.lat, lng: x.position.lon, addr: (x.address && x.address.freeformAddress) || "" }));
 }
-async function searchNearbyText(query, along) {
+// Search box → "near me" / "along route": a synonym becomes a clean category
+// search, anything else (brands, etc.) uses fuzzy free-text.
+function searchNearbyText(query, along) {
   hideResults(); input.value = query;
-  placesActiveCat = null; renderChips();
-  const pts = (along && routeLine) ? sampleRouteAhead() : [navUserPos || [map.getCenter().lng, map.getCenter().lat]];
-  const radius = along ? 3000 : 5000;
-  const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = "searching…";
-  let res = [];
-  try {
-    if (along && routeLine) { for (const p of pts.slice(0, 6)) { try { res.push(...await tomtomSearchAt(query, p, radius)); } catch { /* skip */ } } }
-    else res = await tomtomSearchAt(query, pts[0], radius);
-  } catch { showError("Place search unavailable."); }
-  res = dedupePlaces(res);
-  const origin = navUserPos || pts[0];
-  for (const r of res) { r.dist = haversine(origin, [r.lng, r.lat]); if (along && routeLine) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; } }
-  placesResults = res; sortPlaces();
-  if (ctx) ctx.textContent = res.length ? `${res.length} ${(along && routeLine) ? "along route" : "nearby"} for “${query}”` : `no “${query}” found`;
-  const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
-  window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(false);
-  if (res.length && !(along && routeLine)) {
-    const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
-    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
-  }
+  const cat = synonymCat(query);
+  return runPlaceSearch({ cat, query: cat ? null : query, along });
 }
 function sortPlaces() {
   const mode = (document.getElementById("places-sort") || {}).value || "dist";
