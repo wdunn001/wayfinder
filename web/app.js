@@ -1683,7 +1683,7 @@ function pointInGeom(pt, geom) {
 const alertsAt = (pt) => nwsAlerts.filter((a) => pointInGeom(pt, a.geometry));
 
 /* ---------- current weather near you (NWS point → hourly), shown in the app bar ---------- */
-let localWxAt = 0;
+let localWxAt = 0, lastWxLoc = null;
 function wxEmoji(short) {
   const s = (short || "").toLowerCase();
   if (/thunder|storm/.test(s)) return "⛈️";
@@ -1695,12 +1695,15 @@ function wxEmoji(short) {
   return "🌡️";
 }
 async function updateLocalWeather(force) {
-  if (!navUserPos) return;
+  // Prefer the GPS fix; on desktop (often no GPS) fall back to the map center so
+  // the chip still shows weather for wherever you're looking.
+  const loc = navUserPos || [map.getCenter().lng, map.getCenter().lat];
   const now = performance.now();
-  if (!force && now - localWxAt < 15 * 60 * 1000) return;   // refresh ~15 min
-  localWxAt = now;
+  const moved = !lastWxLoc || haversine(lastWxLoc, loc) > 25000;   // refetch if you've moved/panned >~25 km
+  if (!force && !moved && now - localWxAt < 15 * 60 * 1000) return;
+  localWxAt = now; lastWxLoc = loc;
   try {
-    const pj = await (await fetch(`/nws/points/${navUserPos[1].toFixed(4)},${navUserPos[0].toFixed(4)}`)).json();
+    const pj = await (await fetch(`/nws/points/${loc[1].toFixed(4)},${loc[0].toFixed(4)}`)).json();
     const hourly = pj.properties && pj.properties.forecastHourly;
     if (!hourly) return;
     const fj = await (await fetch(hourly.replace(/^https?:\/\/api\.weather\.gov/, "/nws"))).json();
@@ -1712,6 +1715,11 @@ async function updateLocalWeather(force) {
     el.classList.remove("hidden");
   } catch { /* NWS point forecast unavailable */ }
 }
+// Show it on load (map center until auto-locate flies to you) and refresh when
+// you pan to a new area — so the chip appears on desktop without a GPS fix too.
+if (map.loaded && map.loaded()) updateLocalWeather(true); else map.once("load", () => updateLocalWeather(true));
+setTimeout(() => updateLocalWeather(true), 3500);
+{ let wxT = null; map.on("moveend", () => { clearTimeout(wxT); wxT = setTimeout(() => updateLocalWeather(), 1500); }); }
 function warnAlert(a, prefix) {
   const id = a.id || (a.properties && a.properties.id) || ((a.properties && a.properties.event) + "|" + (a.properties && a.properties.areaDesc));
   if (warnedAlerts.has(id)) return;
