@@ -435,14 +435,31 @@ async function doSearch(q) {
   } catch { showError("Geocoders unreachable (Nominatim + Photon both failed)."); }
 }
 function renderResults() {
-  if (!lastResults.length) { hideResults(); return; }
+  const q = input.value.trim();
   resultsEl.innerHTML = "";
+  // Top of the dropdown: turn the typed query into a NEARBY / ALONG-ROUTE place
+  // search (visual pins to pick from), not just a specific-address geocode.
+  if (q.length >= 3) {
+    const near = document.createElement("li");
+    near.className = "search-action";
+    near.innerHTML = `🔎 Search “${escapeHtml(q)}” <b>near me</b>`;
+    near.addEventListener("click", () => searchNearbyText(q, false));
+    resultsEl.appendChild(near);
+    if (routeLine) {   // a route is drawn (planned or navigating) → offer "on my way"
+      const along = document.createElement("li");
+      along.className = "search-action";
+      along.innerHTML = `🧭 Search “${escapeHtml(q)}” <b>along route</b>`;
+      along.addEventListener("click", () => searchNearbyText(q, true));
+      resultsEl.appendChild(along);
+    }
+  }
   lastResults.forEach((s, i) => {
     const li = document.createElement("li");
     li.innerHTML = `${escapeHtml(s.label)}<span class="sub">${escapeHtml(s.sub || "")}</span>`;
     li.addEventListener("click", () => pickResult(i));
     resultsEl.appendChild(li);
   });
+  if (!resultsEl.children.length) { hideResults(); return; }
   positionResults();
   resultsEl.classList.remove("hidden");
 }
@@ -562,6 +579,9 @@ function selectRoute(idx) {
 function renderRoutes(fit) {
   const sel = currentRoutes[selectedRouteIdx];
   if (!sel) return clearRoute();
+  // Cache the selected route's line so "search along route" works for a planned
+  // route too (nav mode manages routeLine itself via startNav/reroute).
+  if (!navMode && sel.geometry) setRouteLine(sel.geometry.coordinates);
   map.getSource("route").setData({ type: "FeatureCollection", features: routeSegments(sel) });
   map.getSource("route-alt").setData({
     type: "FeatureCollection",
@@ -577,6 +597,7 @@ function renderRoutes(fit) {
 function clearRoute() {
   ["route", "route-alt"].forEach((s) => map.getSource && map.getSource(s) &&
     map.getSource(s).setData({ type: "FeatureCollection", features: [] }));
+  if (!navMode) { routeLine = null; navS = 0; }   // no route drawn -> hide "along route" search
 }
 // The route builder (search/stops/actions) is a collapsible <details>; collapse
 // it after a route is computed so the maneuver list gets the room, reopen it to edit.
@@ -1312,6 +1333,38 @@ async function findPlaces(cat) {
   if (ctx) ctx.textContent = res.length ? (along ? `${res.length} along route` : `${res.length} nearby`) : "none found";
   const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
   if (res.length && !navMode) {
+    const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
+    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
+  }
+}
+// Free-text place search from the search box ("gas", "coffee", "walmart") — near
+// a point, or along the route ahead. Renders the same pins + picklist as chips.
+async function tomtomSearchAt(query, center, radius) {
+  const r = await fetch(`/poi-search/${encodeURIComponent(query)}.json?lat=${center[1].toFixed(5)}&lon=${center[0].toFixed(5)}&radius=${radius}&limit=20`);
+  if (!r.ok) throw new Error("poi-search " + r.status);
+  const j = await r.json();
+  return (j.results || []).map((x) => ({ id: "t" + x.id, name: (x.poi && x.poi.name) || (x.address && x.address.freeformAddress) || "Place",
+    lat: x.position.lat, lng: x.position.lon, addr: (x.address && x.address.freeformAddress) || "" }));
+}
+async function searchNearbyText(query, along) {
+  hideResults(); input.value = query;
+  placesActiveCat = null; renderChips();
+  const pts = (along && routeLine) ? sampleRouteAhead() : [navUserPos || [map.getCenter().lng, map.getCenter().lat]];
+  const radius = along ? 3000 : 5000;
+  const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = "searching…";
+  let res = [];
+  try {
+    if (along && routeLine) { for (const p of pts.slice(0, 6)) { try { res.push(...await tomtomSearchAt(query, p, radius)); } catch { /* skip */ } } }
+    else res = await tomtomSearchAt(query, pts[0], radius);
+  } catch { showError("Place search unavailable."); }
+  res = dedupePlaces(res);
+  const origin = navUserPos || pts[0];
+  for (const r of res) { r.dist = haversine(origin, [r.lng, r.lat]); if (along && routeLine) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; } }
+  placesResults = res; sortPlaces();
+  if (ctx) ctx.textContent = res.length ? `${res.length} ${(along && routeLine) ? "along route" : "nearby"} for “${query}”` : `no “${query}” found`;
+  const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
+  window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(false);
+  if (res.length && !(along && routeLine)) {
     const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
     if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
   }
