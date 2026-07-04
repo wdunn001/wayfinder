@@ -1041,16 +1041,24 @@ function setPuck(pt, brg) {
 }
 function navTick() {
   if (!navMode) { navRAF = 0; return; }
-  // Dead-reckon along the route from the last fix at current speed, glide toward
-  // it, and clamp so we never lead more than ~1.6 s past the last real fix.
   const now = performance.now();
-  const predicted = navLastFixS + navSpeed * ((now - navLastFixT) / 1000);
-  const maxLead = navLastFixS + navSpeed * 1.6 + 12;
-  navS += (Math.min(predicted, maxLead) - navS) * 0.18;
+  const moving = navSpeed > 0.7;   // below this = stationary (GPS jitter), don't dead-reckon
+  if (moving) {
+    // Dead-reckon along the route from the last fix at current speed, glide
+    // toward it, clamped so we never lead more than ~1.6 s past the last fix.
+    const predicted = navLastFixS + navSpeed * ((now - navLastFixT) / 1000);
+    const maxLead = navLastFixS + navSpeed * 1.6 + 8;
+    navS += (Math.min(predicted, maxLead) - navS) * 0.18;
+  } else {
+    // Stationary: settle onto the last fix — no forward creep while still.
+    navS += (navLastFixS - navS) * 0.25;
+    if (Math.abs(navS - navLastFixS) < 0.5) navS = navLastFixS;
+  }
   const at = pointAtS(navS);
   if (at) {
-    const brg = navSpeed > 0.8 ? at.bearing : navHeading;   // freeze heading when stopped
-    const look = pointAtS(navS + Math.min(45, 8 + navSpeed * 4)); // look slightly ahead
+    const brg = moving ? at.bearing : navHeading;              // freeze heading when stopped
+    const lead = moving ? Math.min(45, navSpeed * 4) : 0;      // camera only leads while moving
+    const look = lead ? pointAtS(navS + lead) : at;
     map.jumpTo({ center: (look ? look.pt : at.pt), bearing: brg, pitch: is3D ? 60 : 0 });
     setPuck(at.pt, brg);
   }
@@ -1062,7 +1070,7 @@ function onNavFix(e) {
   const nowT = performance.now();
   let sp = (typeof e.coords.speed === "number" && e.coords.speed >= 0) ? e.coords.speed : null;
   if (sp == null) { const dt = (nowT - navLastFixT) / 1000; if (dt > 0.3 && dt < 15) sp = Math.max(0, (pr.s - navLastFixS) / dt); }
-  if (sp != null) navSpeed = navSpeed ? 0.55 * navSpeed + 0.45 * sp : sp;
+  if (sp != null) navSpeed = (sp < 0.7) ? 0 : (navSpeed ? 0.55 * navSpeed + 0.45 * sp : sp); // deadband GPS jitter
   navHeading = (typeof e.coords.heading === "number" && !isNaN(e.coords.heading)) ? e.coords.heading : pr.bearing;
   navLastFixS = pr.s; navLastFixT = nowT;
   if (pr.cross > 45) { offRouteCount++; if (offRouteCount >= 3) reroute(); } else offRouteCount = 0;
@@ -1078,7 +1086,7 @@ async function startNav() {
   resetPrompts(); offRouteCount = 0; navSpeed = 0;
   const seed = navUserPos ? projectToRoute(navUserPos) : null;
   navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
-  try { map.easeTo({ zoom: 17, pitch: is3D ? 60 : 0, duration: 500 }); } catch { /* map not ready */ }
+  try { map.easeTo({ zoom: 18, pitch: is3D ? 60 : 0, duration: 500 }); } catch { /* map not ready */ }
   acquireWakeLock();
   try { geoCtl.trigger(); } catch { /* already tracking */ }
   if (!navRAF) navRAF = requestAnimationFrame(navTick);
