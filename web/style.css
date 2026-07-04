@@ -31,7 +31,7 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 /* Nav HUD: big maneuver icon + distance-to-turn + street, ETA to the right. */
 .hud-man { flex: none; width: 34px; height: 34px; display: grid; place-items: center; color: #fff; }
 .hud-man svg { width: 30px; height: 30px; }
-.hud-main { flex: 1; min-width: 0; line-height: 1.15; }
+.hud-main { flex: 1; min-width: 0; line-height: 1.2; display: flex; flex-direction: column; }
 .hud-dist { font-size: 18px; font-weight: 800; }
 .hud-street { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hud-eta { flex: none; text-align: right; line-height: 1.15; }
