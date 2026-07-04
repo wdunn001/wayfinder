@@ -1398,25 +1398,20 @@ function sortPlaces() {
   placesResults.sort((a, b) => along ? ((a.s ?? Infinity) - (b.s ?? Infinity)) : (mode === "rel" ? 0 : a.dist - b.dist));
   renderPlaces();
 }
-function ensurePlacesLayer() {
-  if (map.getSource("places")) return;
-  map.addSource("places", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-  map.addLayer({ id: "places-pins", type: "circle", source: "places",
-    paint: { "circle-radius": 13, "circle-color": "#8e24aa", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-  map.addLayer({ id: "places-num", type: "symbol", source: "places",
-    layout: { "text-field": ["to-string", ["get", "n"]], "text-size": 12, "text-font": ["Noto Sans Regular"], "text-allow-overlap": true },
-    paint: { "text-color": "#fff" } });
-  map.on("click", "places-pins", (e) => flyToPlace(Number(e.features[0].properties.i)));
-  map.on("mouseenter", "places-pins", () => { map.getCanvas().style.cursor = "pointer"; });
-  map.on("mouseleave", "places-pins", () => { map.getCanvas().style.cursor = ""; });
-}
+// Place pins are HTML markers, NOT a glyph symbol layer: the vendored font
+// folder has spaces ("Noto Sans Regular") which break nginx try_files, so glyph
+// pbfs 404 → SPA index.html → MapLibre floods "Unimplemented type: 4". Markers
+// need no glyphs, always render regardless of style-load timing, and click natively.
+let placesMarkers = [];
 function renderPlaces() {
-  // The map may not be style-ready when a fast search fires; defer the map bits
-  // to idle but still render the list. (addSource/addLayer throw pre-load.)
-  try { ensurePlacesLayer(); } catch { map.once("idle", renderPlaces); }
-  const src = map.getSource("places");
-  if (src) src.setData({ type: "FeatureCollection",
-    features: placesResults.map((r, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.lng, r.lat] }, properties: { n: i + 1, i } })) });
+  placesMarkers.forEach((m) => m.remove());
+  placesMarkers = placesResults.map((r, i) => {
+    const el = document.createElement("div");
+    el.className = "place-pin";
+    el.textContent = String(i + 1);
+    el.addEventListener("click", (e) => { e.stopPropagation(); flyToPlace(i); });
+    return new maplibregl.Marker({ element: el }).setLngLat([r.lng, r.lat]).addTo(map);
+  });
   const list = document.getElementById("places-list"); if (!list) return;
   list.innerHTML = placesResults.map((r, i) =>
     `<li class="place-row" data-i="${i}"><span class="pidx">${i + 1}</span>` +
