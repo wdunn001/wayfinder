@@ -959,15 +959,53 @@ function primeSpeech(text) {
   if (!ttsCache.has(text)) ttsCache.set(text, synthBuffer(text).catch((e) => { ttsCache.delete(text); throw e; }));
   return ttsCache.get(text);
 }
-function speak(text) {
-  if (voiceMuted || !text) return;
+function speak(text) { if (text) speakSeq([text]); }
+// Play a SEQUENCE of cached phrase fragments back-to-back, gaplessly scheduled on
+// the audio timeline. Fixed fragments ("turn left", "In 500 feet,", "onto") are
+// pre-synthesized once (primeFragments); only the variable street name is ever
+// newly synthesized — so we don't re-generate whole sentences with AI each time.
+function speakSeq(parts) {
+  if (voiceMuted || !parts || !parts.length) return;
   speakChain = speakChain.then(async () => {
     try {
       const ctx = getAudioCtx(); if (ctx.state === "suspended") await ctx.resume();
-      const buffer = await primeSpeech(text);
-      await new Promise((res) => { const s = ctx.createBufferSource(); s.buffer = buffer; s.connect(ctx.destination); s.onended = res; s.start(); });
+      const bufs = [];
+      for (const p of parts) { if (!p) continue; try { bufs.push(await primeSpeech(p)); } catch { /* skip a bad fragment */ } }
+      if (!bufs.length) return;
+      await new Promise((res) => {
+        let t = ctx.currentTime + 0.03, last = null;
+        for (const b of bufs) { const s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(t); t += b.duration; last = s; }
+        if (last) last.onended = res; else res();
+      });
     } catch { /* voice is best-effort */ }
   });
+}
+// Fixed phrase fragments — pre-synthesized on nav start so every prompt is a
+// cache hit at play time (street names are cached on approach separately).
+const FRAG_DIST = ["In 1 mile,", "In half a mile,", "In 500 feet,", "In 300 feet,"];
+const FRAG_CORE = { left: "turn left", right: "turn right", "slight-left": "keep left", "slight-right": "keep right",
+  "sharp-left": "turn sharp left", "sharp-right": "turn sharp right", uturn: "make a U-turn", straight: "continue straight",
+  roundabout: "take the roundabout", merge: "merge", ramp: "take the ramp", fork: "keep straight", depart: "start out",
+  arrive: "arrive at your destination" };
+const FRAG_MISC = ["onto", ", then", "Rerouting.", "Starting navigation.", "You have arrived at your destination.", "Voice on.", "continue"];
+function primeFragments() { [...FRAG_DIST, ...Object.values(FRAG_CORE), ...FRAG_MISC].forEach((t) => primeSpeech(t)); }
+// The fragment array for a maneuver: core turn + "onto" + street (street synth'd on demand).
+function maneuverParts(idx) {
+  const st = currentSteps[idx]; if (!st) return [];
+  const core = FRAG_CORE[st.kind] || "continue";
+  const parts = [core];
+  if (st.kind !== "arrive" && st.road) { parts.push("onto"); parts.push(st.road); }
+  return parts;
+}
+// Full announcement parts for a step (with optional distance prefix), chaining an
+// immediately-following turn as ", then …" when the leg between them is short.
+function announceParts(prefix, idx) {
+  const st = currentSteps[idx]; if (!st) return [];
+  const parts = prefix ? [prefix] : [];
+  parts.push(...maneuverParts(idx));
+  const next = currentSteps[idx + 1];
+  if (next && st.dist > 0 && st.dist < 160) { parts.push(", then"); parts.push(...maneuverParts(idx + 1)); }
+  return parts;
 }
 // Short WebAudio "ding"s (no audio files → offline-safe). Rising = start, falling = stop.
 function ding(fromHz, toHz, durMs) {
@@ -1085,23 +1123,31 @@ function routeToPoint(p) {
 }
 
 /* ---------- voice prompt scheduler (imperial, pre-synthesized) ---------- */
-function resetPrompts() { promptFired = { idx: -1 }; }
+let announcedNow = -1;   // highest step index whose at-turn instruction was spoken (incl. via a "then" chain)
+function resetPrompts() { promptFired = { idx: -1 }; announcedNow = -1; }
 function schedulePrompts() {
   if (!navMode || !currentSteps.length) return;
   const st = currentSteps[navIdx]; if (!st) return;
+  if (navIdx <= announcedNow) return;          // this turn was already spoken as a chained "then …"
   if (promptFired.idx !== navIdx) promptFired = { idx: navIdx };
   const d = alongDistToManeuver();
   const isLast = navIdx === currentSteps.length - 1;
-  const instr = st.text;
-  const arriveMsg = "You have arrived at your destination.";
-  // Pre-synthesize this maneuver's phrases while ~1.3 mi out (covers slow synth).
+  // A very short leg after this maneuver means the NEXT turn comes immediately.
+  const chained = !isLast && st.dist > 0 && st.dist < 160 && !!currentSteps[navIdx + 1];
+  // Pre-cache only the street name(s) on approach — the fixed fragments are
+  // already primed (primeFragments on nav start), so nothing else needs synth.
   if (d < 2100 && !promptFired.primed) {
     promptFired.primed = true;
-    primeSpeech(`In 1 mile, ${instr}`); primeSpeech(`In 500 feet, ${instr}`); primeSpeech(isLast ? arriveMsg : instr);
+    if (st.road) primeSpeech(st.road);
+    if (chained && currentSteps[navIdx + 1].road) primeSpeech(currentSteps[navIdx + 1].road);
   }
-  if (!promptFired.mile && st.dist > 1800 && d <= 1609 && d > 550) { promptFired.mile = true; speak(`In 1 mile, ${instr}`); }
-  if (!promptFired.near && d <= 168 && d > 40) { promptFired.near = true; speak(`In 500 feet, ${instr}`); }
-  if (!promptFired.now && d <= 40) { promptFired.now = true; speak(isLast ? arriveMsg : instr); }
+  if (!promptFired.mile && st.dist > 1800 && d <= 1609 && d > 550) { promptFired.mile = true; speakSeq(announceParts("In 1 mile,", navIdx)); }
+  if (!promptFired.near && d <= 168 && d > 40) { promptFired.near = true; speakSeq(announceParts("In 500 feet,", navIdx)); }
+  if (!promptFired.now && d <= 40) {
+    promptFired.now = true;
+    if (isLast) speakSeq(["You have arrived at your destination."]);
+    else { speakSeq(announceParts("", navIdx)); announcedNow = chained ? navIdx + 1 : navIdx; }
+  }
 }
 
 /* ---------- camera follow (predictive rAF loop) ---------- */
@@ -1157,7 +1203,7 @@ async function startNav() {
   navMode = true; document.body.classList.add("nav-active");
   collapseRouteBuilder(); window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(true);
   try { const c = getAudioCtx(); if (c.state === "suspended") await c.resume(); } catch { /* gesture needed */ }
-  resetPrompts(); offRouteCount = 0; navSpeed = 0;
+  resetPrompts(); primeFragments(); offRouteCount = 0; navSpeed = 0;   // pre-synth the fixed phrase clips
   const seed = navUserPos ? projectToRoute(navUserPos) : null;
   navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
   try { map.easeTo({ zoom: 18, pitch: is3D ? 60 : 0, duration: 500 }); } catch { /* map not ready */ }
