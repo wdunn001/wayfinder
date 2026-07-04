@@ -1059,18 +1059,25 @@ function parseVoiceLocal(text) {
   const s = " " + text.toLowerCase().replace(/[?.!,]+/g, " ") + " ";
   const navigate = /\b(directions?|navigate|take me|drive|go to|route to|get me|bring me|head to|nav to)\b/.test(s);
   const nearest = /\b(nearest|closest|near me|nearby|around here)\b/.test(s);
-  const along = /\b(on my way|along (the |my )?route|on the way)\b/.test(s);
+  const along = /\b(on my way|along( the| my)? (current )?route|on the way|to (the )?(current )?route)\b/.test(s);
+  // "add … to the route / along the route" = drop a WAYPOINT and keep driving,
+  // vs "take me to X" = a new destination (replaces the route, confirmed later).
+  const wantsAdd = /\b(add|stop (at|by)|swing by|pick up|grab)\b/.test(s) || along;
   let q = s
     .replace(/\b(hey |ok |okay )?(can you |could you |would you |please )?/g, "")
+    .replace(/\b(add|stop (at|by)|swing by|pick up|grab)\b/g, "")
     .replace(/\b(get |give me |find me |show me )?(me )?(directions?|navigation)( to| for)?\b/g, "")
-    .replace(/\b(navigate|take me|drive|go|route|head|bring me|nav)( to| me to)?\b/g, "")
+    .replace(/\b(navigate to|navigate|take me to|take me|drive me to|drive to|route to|head to|bring me to|bring me|nav to|go to)\b/g, "")
     .replace(/\b(find|search for|where('?s| is| are)|locate)\b/g, "")
-    .replace(/\b(the|a|an)\b/g, "")
-    .replace(/\b(nearest|closest|nearby)\b/g, "")
-    .replace(/\b(near me|around here|on my way|along( the| my)? route|on the way)\b/g, "")
+    // strip route/location phrases BEFORE removing articles (they contain "the"/"my")
+    .replace(/\b(to|on|along)\s+(the\s+|my\s+)?(current\s+)?route\b/g, "")
+    .replace(/\b(near me|around here|on my way|on the way|nearby)\b/g, "")
+    .replace(/\b(nearest|closest)\b/g, "")
+    .replace(/\b(the|a|an|and|then)\b/g, "")
     .replace(/\s+/g, " ").trim();
   const category = synonymCat(q) || synonymCat(q.replace(/\bstation\b/, "").trim()) || synonymCat(q.replace(/s$/, "")) || null;
-  return { action: navigate ? "navigate" : "search", category, query: category ? null : q, nearest, along_route: along };
+  const action = wantsAdd ? "add" : (navigate ? "navigate" : "search");
+  return { action, category, query: category ? null : q, nearest, along_route: along };
 }
 // gpt-oss refines the parse (better on odd phrasings); 4.5 s timeout → local.
 async function parseVoiceCommand(text) {
@@ -1078,10 +1085,11 @@ async function parseVoiceCommand(text) {
   try {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4500);
     const prompt = `Parse this map/navigation request. Reply with JSON only.\n` +
-      `Fields: "action" ("navigate" if they want directions/routing e.g. take me, drive to, get directions, go to; else "search"), ` +
+      `Fields: "action" one of: "add" (add a stop ALONG/ON the current route while continuing e.g. add gas, find X along the route), ` +
+      `"navigate" (a new destination — take me to, drive to, get directions to X), else "search" (just find/show), ` +
       `"category" (one of fuel,food,coffee,ev,grocery,pharmacy,atm,hotel,parking,hospital for a generic place type, else null), ` +
-      `"query" (specific place name or address if not a category, else null), ` +
-      `"nearest" (true if nearest/closest/near me), "along_route" (true if on my way/along route).\n` +
+      `"query" (specific place/cuisine/name or address if not a category, else null), ` +
+      `"nearest" (true if nearest/closest/near me), "along_route" (true if on my way/along the route).\n` +
       `Request: "${text}"`;
     const r = await fetch("/llm", { method: "POST", headers: { "Content-Type": "application/json" }, signal: ctl.signal,
       body: JSON.stringify({ model: "gpt-oss:20b", stream: false, format: "json", prompt }) });
@@ -1089,14 +1097,72 @@ async function parseVoiceCommand(text) {
     if (r.ok) {
       const p = JSON.parse((await r.json()).response || "{}");
       const cat = (p.category && catOf(p.category)) ? p.category : local.category;
-      return { action: p.action === "navigate" ? "navigate" : (local.action), category: cat,
+      const act = ["add", "navigate", "search"].includes(p.action) ? p.action : local.action;
+      return { action: act, category: cat,
         query: cat ? null : (p.query || local.query), nearest: !!p.nearest || local.nearest, along_route: !!p.along_route || local.along_route };
     }
   } catch { /* timeout/offline → local parse */ }
   return local;
 }
 // Act on a parsed voice command.
+// Find places along the route ahead (category or free text), sorted by how soon
+// you'd reach them; used by "add … along the route" voice commands.
+async function findAlongRoute(cat, query) {
+  const useAlong = navMode && !!routeLine;
+  const pts = useAlong ? sampleRouteAhead() : [navUserPos || [map.getCenter().lng, map.getCenter().lat]];
+  const raw = dedupePlaces(await fetchPlaces({ cat, query: cat ? null : query, pts, radius: 3000 }));
+  for (const r of raw) {
+    if (routeLine) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; r.dist = pr ? pr.cross : Infinity; }
+    else { r.dist = navUserPos ? haversine(navUserPos, [r.lng, r.lat]) : 0; r.s = r.dist; }
+  }
+  raw.sort((a, b) => (a.s ?? Infinity) - (b.s ?? Infinity));
+  return raw;
+}
+// Optimize the middle stops (keep current position first, destination last) via
+// OSRM trip, then re-seat live navigation on the result. Falls back to a plain
+// through-route when there's nothing to reorder.
+async function optimizeAndReroute(msg) {
+  if (!navUserPos || stops.length < 2) return;
+  const mids = stops.slice(1);                         // waypoints + destination (origin[0] excluded)
+  if (mids.length < 2) return liveReroute(mids.map((s) => [s.lng, s.lat]), msg);
+  if (msg) speak(msg);
+  rerouting = true;
+  try {
+    const coords = [navUserPos, ...mids.map((s) => [s.lng, s.lat])].map((c) => `${c[0]},${c[1]}`).join(";");
+    const r = await fetch(`${OSRM}/trip/v1/driving/${coords}?source=first&destination=last&roundtrip=false&overview=full&geometries=geojson&steps=true`);
+    const j = await r.json();
+    if (j.code === "Ok" && j.trips && j.trips[0]) {
+      const order = j.waypoints.map((w, i) => ({ i, pos: w.waypoint_index })).sort((a, b) => a.pos - b.pos).map((x) => x.i);
+      stops = [stops[0], ...order.filter((i) => i > 0).map((i) => mids[i - 1])];   // reorder mids; navUserPos (i=0) dropped
+      currentRoutes = [j.trips[0]]; selectedRouteIdx = 0; optimizedOrder = true;
+      setRouteLine(j.trips[0].geometry.coordinates);
+      renderRoutes(false); renderSteps(); resetPrompts(); render();
+      const pr = projectToRoute(navUserPos); if (pr) { navS = pr.s; navLastFixS = pr.s; }
+      evaluateRoutesTraffic().catch(() => {});
+    } else { await liveReroute(mids.map((s) => [s.lng, s.lat])); }
+  } catch { await liveReroute(mids.map((s) => [s.lng, s.lat])); }
+  finally { rerouting = false; }
+}
+// "add gas along the route" → insert the soonest match as a waypoint, optimize,
+// keep driving. Keeps the destination; no route-replacement confirm needed.
+async function addAlongRoute(cmd, text) {
+  const label = cmd.category ? catOf(cmd.category).label.split(" ")[1].toLowerCase() : (cmd.query || text);
+  const results = await findAlongRoute(cmd.category, cmd.query || text);
+  if (!results.length) { speak(`I couldn't find any ${label} along your route.`); return; }
+  placesResults = results; renderPlaces();
+  const p = results[0];
+  if (navMode && routeLine && stops.length >= 1) {
+    const dest = stops[stops.length - 1];
+    stops.splice(Math.max(1, stops.length - 1), 0, { localId: newId(), lat: p.lat, lng: p.lng, label: p.name || p.label });
+    render();
+    await optimizeAndReroute(`Adding ${p.name || label} to your route.`);
+  } else {   // not navigating: just add it as a stop in the plan
+    stops.push({ localId: newId(), lat: p.lat, lng: p.lng, label: p.name || label });
+    clearRoute(); render(); speak(`Added ${p.name || label}.`);
+  }
+}
 async function handleVoiceCommand(text, cmd) {
+  if (cmd.action === "add") { await addAlongRoute(cmd, text); return; }
   const navigate = cmd.action === "navigate";
   if (cmd.category) {
     const along = cmd.along_route || (navMode && !!routeLine);
