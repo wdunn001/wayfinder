@@ -1409,14 +1409,28 @@ async function fetchPlaces({ cat, query, pts, radius }) {
   const out = []; for (const p of pts.slice(0, 6)) { try { out.push(...await tomtomSearchAt(query, p, radius)); } catch { /* skip */ } }
   return out;
 }
+// The center for a "near me" search: the live GPS fix, else actively request
+// one, else the map center ONLY if zoomed in (otherwise it's the default
+// center-of-US and "nearest" would return somewhere across the country).
+async function pointSearchOrigin() {
+  if (navUserPos) return navUserPos;
+  try { const p = await currentPosition(); navUserPos = p; return p; } catch { /* denied/timeout */ }
+  if (map.getZoom() >= 10) return [map.getCenter().lng, map.getCenter().lat];
+  return null;
+}
 async function runPlaceSearch({ cat, query, along }) {
   placesActiveCat = cat; renderChips();
   const useAlong = along && !!routeLine;
-  const pts = useAlong ? sampleRouteAhead() : [navUserPos || [map.getCenter().lng, map.getCenter().lat]];
-  const radius = useAlong ? 3000 : 5000;
   const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = "searching…";
+  let center = null;
+  if (!useAlong) {
+    center = await pointSearchOrigin();
+    if (!center) { if (ctx) ctx.textContent = "need your location"; showError("Enable location (or zoom to an area) to search nearby."); return; }
+  }
+  const pts = useAlong ? sampleRouteAhead() : [center];
+  const radius = useAlong ? 3000 : 5000;
   const res = dedupePlaces(await fetchPlaces({ cat, query, pts, radius }));
-  const origin = navUserPos || pts[0];
+  const origin = useAlong ? (navUserPos || pts[0]) : center;
   for (const r of res) { r.dist = haversine(origin, [r.lng, r.lat]); if (useAlong) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; } }
   placesResults = res; sortPlaces();
   if (ctx) ctx.textContent = res.length ? `${res.length} ${useAlong ? "along route" : "nearby"}` : "none found";
