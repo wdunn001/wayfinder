@@ -44,7 +44,13 @@ html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Seg
 .ab-btn:hover { border-color: var(--accent-2); }
 .ab-btn.primary { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 700; }
 .ab-btn.danger { border-color: var(--danger); color: #ffb4b4; }
-.ab-btn.recording { background: var(--danger); color: #fff; border-color: var(--danger); }
+.ab-btn.recording { background: var(--danger); color: #fff; border-color: var(--danger); animation: mic-pulse 1s ease-in-out infinite; }
+@keyframes mic-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(198,40,40,.55); } 50% { box-shadow: 0 0 0 6px rgba(198,40,40,0); } }
+/* Working spinner while the voice command is transcribed + processed */
+.ab-btn.busy { color: transparent; pointer-events: none; position: relative; }
+.ab-btn.busy::after { content: ""; position: absolute; inset: 0; margin: auto; width: 16px; height: 16px;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: mic-spin .7s linear infinite; }
+@keyframes mic-spin { to { transform: rotate(360deg); } }
 .ab-btn.muted { color: var(--muted); }
 .ab-btn.hidden { display: none; }
 
@@ -287,9 +293,10 @@ body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
 .place-row .pidx { width: 20px; height: 20px; flex: none; border-radius: 50%; display: grid; place-items: center;
   font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); }
-.place-row .pmain { flex: 1; min-width: 0; }
-.place-row .pname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.place-row .psub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-row .pmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.place-row .pname { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* distance + address sit UNDER the name and each truncate instead of overflowing */
+.place-row .psub { display: block; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .place-row .padd { flex: none; background: var(--accent); border: 1px solid var(--accent-2); color: #fff;
   cursor: pointer; font-size: 11px; border-radius: 6px; padding: 3px 8px; }
 .place-row .padd.ghost { background: transparent; color: var(--muted); border-color: var(--line); }

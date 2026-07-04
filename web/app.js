@@ -969,6 +969,20 @@ function speak(text) {
     } catch { /* voice is best-effort */ }
   });
 }
+// Short WebAudio "ding"s (no audio files → offline-safe). Rising = start, falling = stop.
+function ding(fromHz, toHz, durMs) {
+  try {
+    const ctx = getAudioCtx(); if (ctx.state === "suspended") ctx.resume();
+    const o = ctx.createOscillator(), g = ctx.createGain(), t = ctx.currentTime, d = durMs / 1000;
+    o.type = "sine"; o.frequency.setValueAtTime(fromHz, t); o.frequency.exponentialRampToValueAtTime(toHz, t + d);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.18, t + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+    o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + d);
+  } catch { /* audio blocked */ }
+}
+const startDing = () => ding(660, 990, 130);   // rising
+const stopDing = () => ding(760, 460, 160);    // falling
+
 let mediaRec = null, recStream = null, recChunks = [];
 async function toggleMic(btn) {
   if (mediaRec && mediaRec.state === "recording") { mediaRec.stop(); return; }
@@ -977,10 +991,13 @@ async function toggleMic(btn) {
     recChunks = []; mediaRec = new MediaRecorder(recStream);
     mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
     mediaRec.onstop = async () => {
-      btn.classList.remove("recording");
+      stopDing();
+      btn.classList.remove("recording"); btn.classList.add("busy"); // spinner while STT+parse+search runs
       recStream && recStream.getTracks().forEach((t) => t.stop());
-      await transcribeAndSearch(new Blob(recChunks, { type: mediaRec.mimeType || "audio/webm" }));
+      try { await transcribeAndSearch(new Blob(recChunks, { type: mediaRec.mimeType || "audio/webm" })); }
+      finally { btn.classList.remove("busy"); }
     };
+    startDing();
     mediaRec.start(); btn.classList.add("recording");
     setTimeout(() => { if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }, 6000); // safety auto-stop
   } catch { showError("Microphone unavailable — allow mic access (needs the HTTPS site)."); }
