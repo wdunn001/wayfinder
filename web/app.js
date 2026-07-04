@@ -1992,4 +1992,45 @@ function addPlaceAsStop(i) {
 document.getElementById("places-sort") && (document.getElementById("places-sort").onchange = sortPlaces);
 renderChips();
 
+/* ================= URL deep links =================
+ * ?origin=…&destination=…  (also daddr/saddr, to/from, q). Each value may be
+ * "lat,lng", "current location"/"here"/"my location" (GPS), or an address/place.
+ * Optional &nav=1 auto-starts navigation once the route is computed. */
+async function resolvePlaceParam(v) {
+  const s = (v || "").trim();
+  const m = s.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);   // lat,lng
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]), label: `${(+m[1]).toFixed(4)}, ${(+m[2]).toFixed(4)}` };
+  if (/^(your\s+)?(current\s+location|my\s+location|current|here|gps|now)$/i.test(s)) {
+    let loc = navUserPos;
+    if (!loc) { try { loc = await currentPosition(); navUserPos = navUserPos || loc; } catch { /* denied */ } }
+    return loc ? { lat: loc[1], lng: loc[0], label: "My location", isCurrent: true } : null;
+  }
+  const res = await geocodeForward(s, 1).catch(() => []);
+  return res[0] ? { lat: res[0].lat, lng: res[0].lng, label: res[0].label } : null;
+}
+async function handleDeepLink() {
+  const p = new URLSearchParams(location.search);
+  const destRaw = p.get("destination") || p.get("daddr") || p.get("to") || p.get("q");
+  if (!destRaw) return;   // no deep link → normal app load
+  const dp = await resolvePlaceParam(destRaw);
+  if (!dp) { showError(`Couldn't find "${destRaw}".`); return; }
+  const list = [];
+  const origRaw = p.get("origin") || p.get("saddr") || p.get("from");
+  const op = origRaw ? await resolvePlaceParam(origRaw) : null;
+  if (op) list.push({ localId: newId(), lat: op.lat, lng: op.lng, label: op.label, origin: !!op.isCurrent });
+  else if (navUserPos) list.push({ localId: newId(), lat: navUserPos[1], lng: navUserPos[0], label: "My location", origin: true });
+  list.push({ localId: newId(), lat: dp.lat, lng: dp.lng, label: dp.label });
+  stops = list; clearError(); render();
+  if (stops.length >= 2) {
+    document.getElementById("btn-route").click();
+    if (p.get("nav") === "1" || p.get("navigate") === "1") setTimeout(() => { if (currentRoutes.length) startNav(); }, 2800);
+  } else {
+    map.flyTo({ center: [dp.lng, dp.lat], zoom: 14 });
+    showError("Allow location (or add a start point) to get directions there.");
+  }
+}
+// Run after the map + a beat for auto-locate to populate GPS (avoids a 2nd prompt).
+if (map.loaded && map.loaded()) setTimeout(handleDeepLink, 1500);
+else map.once("load", () => setTimeout(handleDeepLink, 1500));
+
 render();
