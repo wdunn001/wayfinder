@@ -1357,9 +1357,21 @@ async function runPlaceSearch({ cat, query, along }) {
   if (ctx) ctx.textContent = res.length ? `${res.length} ${useAlong ? "along route" : "nearby"}` : "none found";
   const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
   window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(false);
-  if (res.length && !useAlong) {
-    const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
-    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
+  if (res.length && !useAlong) framePlaces(res, origin);
+}
+// Bring the result pins into view. fitBounds throws when the padding exceeds a
+// narrow (mobile) canvas — which leaves the pins off-screen — so pad
+// proportionally and fall back to easing to the first result.
+function framePlaces(res, origin) {
+  try {
+    const b = new maplibregl.LngLatBounds();
+    res.forEach((r) => b.extend([r.lng, r.lat])); if (origin) b.extend(origin);
+    if (b.isEmpty()) return;
+    const w = (map.getContainer() && map.getContainer().clientWidth) || 360;
+    const leftPad = Math.min(360, Math.round(w * 0.3));
+    map.fitBounds(b, { padding: { top: 80, bottom: 80, left: leftPad, right: 40 }, maxZoom: 15, duration: 600 });
+  } catch {
+    try { map.easeTo({ center: [res[0].lng, res[0].lat], zoom: 13, duration: 600 }); } catch { /* map busy */ }
   }
 }
 // Category chip → along-route while navigating, else near you.
@@ -1392,15 +1404,18 @@ function ensurePlacesLayer() {
   map.addLayer({ id: "places-pins", type: "circle", source: "places",
     paint: { "circle-radius": 13, "circle-color": "#8e24aa", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
   map.addLayer({ id: "places-num", type: "symbol", source: "places",
-    layout: { "text-field": ["get", "n"], "text-size": 12, "text-font": ["Noto Sans Regular"], "text-allow-overlap": true },
+    layout: { "text-field": ["to-string", ["get", "n"]], "text-size": 12, "text-font": ["Noto Sans Regular"], "text-allow-overlap": true },
     paint: { "text-color": "#fff" } });
   map.on("click", "places-pins", (e) => flyToPlace(Number(e.features[0].properties.i)));
   map.on("mouseenter", "places-pins", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "places-pins", () => { map.getCanvas().style.cursor = ""; });
 }
 function renderPlaces() {
-  ensurePlacesLayer();
-  map.getSource("places").setData({ type: "FeatureCollection",
+  // The map may not be style-ready when a fast search fires; defer the map bits
+  // to idle but still render the list. (addSource/addLayer throw pre-load.)
+  try { ensurePlacesLayer(); } catch { map.once("idle", renderPlaces); }
+  const src = map.getSource("places");
+  if (src) src.setData({ type: "FeatureCollection",
     features: placesResults.map((r, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.lng, r.lat] }, properties: { n: i + 1, i } })) });
   const list = document.getElementById("places-list"); if (!list) return;
   list.innerHTML = placesResults.map((r, i) =>
