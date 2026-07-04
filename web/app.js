@@ -1421,10 +1421,37 @@ function renderPlaces() {
   list.querySelectorAll(".place-row").forEach((li) => li.addEventListener("click", (e) => { if (!e.target.classList.contains("padd")) flyToPlace(Number(li.dataset.i)); }));
   list.querySelectorAll(".padd").forEach((b) => b.addEventListener("click", () => addPlaceAsStop(Number(b.dataset.i))));
 }
+// Single shared popup: opening a new one dismisses the previous.
+let placePopup = null;
 function flyToPlace(i) {
   const r = placesResults[i]; if (!r) return;
   map.flyTo({ center: [r.lng, r.lat], zoom: Math.max(map.getZoom(), 15) });
-  new maplibregl.Popup({ offset: 16 }).setLngLat([r.lng, r.lat]).setHTML(`<b>${escapeHtml(r.name)}</b>${r.addr ? "<br>" + escapeHtml(r.addr) : ""}`).addTo(map);
+  if (placePopup) { placePopup.remove(); placePopup = null; }
+  const html =
+    `<div class="place-pop"><b>${escapeHtml(r.name)}</b>` +
+    (r.addr ? `<div class="pp-addr">${escapeHtml(r.addr)}</div>` : "") +
+    `<div class="pp-actions"><button type="button" class="pp-dir">Directions</button>` +
+    `<button type="button" class="pp-add">Add stop</button></div></div>`;
+  placePopup = new maplibregl.Popup({ offset: 18, closeButton: true, closeOnClick: true })
+    .setLngLat([r.lng, r.lat]).setHTML(html).addTo(map);
+  placePopup.on("close", () => { placePopup = null; });
+  const el = placePopup.getElement();
+  if (el) {
+    const dir = el.querySelector(".pp-dir"); if (dir) dir.onclick = () => directionsToPlace(i);
+    const add = el.querySelector(".pp-add"); if (add) add.onclick = () => { addPlaceAsStop(i); if (placePopup) placePopup.remove(); };
+  }
+}
+// Route to this place: append it as the destination, seeding "my location" as
+// the origin when there are no stops yet, then run the normal Directions flow.
+function directionsToPlace(i) {
+  const r = placesResults[i]; if (!r) return;
+  if (placePopup) { placePopup.remove(); placePopup = null; }
+  if (!stops.length && navUserPos)
+    stops.push({ localId: newId(), lat: navUserPos[1], lng: navUserPos[0], label: "My location", origin: true });
+  stops.push({ localId: newId(), lat: r.lat, lng: r.lng, label: r.name });
+  clearError(); render();
+  if (stops.length >= 2) document.getElementById("btn-route").click();
+  else showError("Set a starting point (or allow location), then press Directions.");
 }
 function addPlaceAsStop(i) {
   const r = placesResults[i]; if (!r) return;

@@ -170,6 +170,16 @@ body.nav-active .maplibregl-user-location-accuracy-circle { display: none; }
 .hidden { display: none; }
 
 .maplibregl-popup-content { background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 12px; }
+/* Place pin popup */
+.place-pop { min-width: 150px; }
+.place-pop .pp-addr { color: var(--muted); margin-top: 2px; }
+.place-pop .pp-actions { display: flex; gap: 6px; margin-top: 8px; }
+.place-pop .pp-actions button { flex: 1; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+.place-pop .pp-dir { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+.place-pop .pp-dir:hover { background: var(--accent-2); }
+.place-pop .pp-add:hover { border-color: var(--accent-2); }
+.maplibregl-popup-close-button { color: var(--muted); font-size: 16px; }
 .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color: var(--panel-2); }
 
 /* ---------- tabs ---------- */
