@@ -828,6 +828,7 @@ function showRouteSummary() {
   el.classList.remove("hidden");
   renderSteps();
   updateDrawerLauncher();
+  checkRouteWeather();   // warn if the new route crosses an active NWS alert (when alerts are loaded)
 }
 
 /* ---------- batch import ---------- */
@@ -1284,6 +1285,7 @@ function onNavFix(e) {
   navHeading = (typeof e.coords.heading === "number" && !isNaN(e.coords.heading)) ? e.coords.heading : pr.bearing;
   navLastFixS = pr.s; navLastFixT = nowT;
   if (pr.cross > 45) { offRouteCount++; if (offRouteCount >= 3) reroute(); } else offRouteCount = 0;
+  checkPositionWeather();   // warn on entering an active weather-alert area
 }
 
 /* ---------- start / exit / reroute / wake-lock ---------- */
@@ -1294,6 +1296,7 @@ async function startNav() {
   collapseRouteBuilder(); window.wfSetDrawerCollapsed && window.wfSetDrawerCollapsed(true);
   try { const c = getAudioCtx(); if (c.state === "suspended") await c.resume(); } catch { /* gesture needed */ }
   resetPrompts(); primeFragments(); offRouteCount = 0; navSpeed = 0;   // pre-synth the fixed phrase clips
+  warnedAlerts.clear(); ensureAlertFeed();   // auto weather warnings while driving (layer hidden unless Weather is on)
   following = true;
   const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
   // One-time: a real user gesture (has originalEvent) breaks follow; our own
@@ -1319,7 +1322,7 @@ function exitNav() {
   if (navRAF) { cancelAnimationFrame(navRAF); navRAF = 0; }
   if (puckMarker) { puckMarker.remove(); puckMarker = null; }
   const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
-  releaseWakeLock();
+  releaseWakeLock(); maybeStopAlertFeed();
   try { map.easeTo({ bearing: 0, pitch: is3D ? 55 : 0, duration: 500 }); } catch { /* map not ready */ }
   updateHeader();
 }
@@ -1491,6 +1494,105 @@ function updateDrawerLauncher() { updateHeader(); }
   if (start === null) start = window.matchMedia("(max-width: 640px)").matches ? "1" : "0";
   setCollapsed(start === "1", false);
 })();
+
+/* ================= NWS weather alerts (layer + route/position warnings) =================
+ * Layer styling matches the mzfs fleet map (severity-keyed fill/line). mzfs has
+ * no route-vs-alert check, so the "bad weather on your route / entering an area"
+ * warnings are added here with a dependency-free point-in-polygon. */
+let weatherOn = false, nwsAlerts = [], weatherTimer = null;
+const warnedAlerts = new Set();
+const btnWeather = document.getElementById("btn-weather");
+
+function ensureWeatherLayers() {
+  if (map.getSource("nws-alerts")) return;
+  map.addSource("nws-alerts", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  const sev = (a, b, c, d, def) => ["match", ["downcase", ["coalesce", ["get", "severity"], ""]], "extreme", a, "severe", b, "moderate", c, "minor", d, def];
+  const under = map.getLayer("route-casing") ? "route-casing" : (map.getLayer("route-line") ? "route-line" : undefined);
+  map.addLayer({ id: "nws-fill", type: "fill", source: "nws-alerts",
+    filter: ["any", ["==", ["geometry-type"], "Polygon"], ["==", ["geometry-type"], "MultiPolygon"]],
+    layout: { visibility: "none" },
+    paint: { "fill-color": sev("#7b1fa2", "#e53935", "#fb8c00", "#ffee58", "#78909c"),
+      "fill-opacity": sev(0.28, 0.26, 0.22, 0.2, 0.16) } }, under);
+  map.addLayer({ id: "nws-line", type: "line", source: "nws-alerts",
+    layout: { visibility: "none" },
+    paint: { "line-color": sev("#4a148c", "#b71c1c", "#e65100", "#f9a825", "#455a64"), "line-width": 1.5, "line-opacity": 0.9 } }, under);
+  map.on("click", "nws-fill", (e) => {
+    const p = e.features[0].properties || {};
+    new maplibregl.Popup({ offset: 8, maxWidth: "300px" }).setLngLat(e.lngLat)
+      .setHTML(`<b>${escapeHtml(p.event || "Weather alert")}</b>` +
+        (p.headline ? `<div class="pp-addr">${escapeHtml(p.headline)}</div>` : "") +
+        (p.instruction ? `<div class="muted" style="margin-top:6px">${escapeHtml(p.instruction)}</div>` : "")).addTo(map);
+  });
+  map.on("mouseenter", "nws-fill", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "nws-fill", () => { map.getCanvas().style.cursor = ""; });
+}
+async function fetchAlerts() {
+  try {
+    // Significant, driving-relevant severities only (skip Minor advisories) to keep the payload lean.
+    const r = await fetch("/nws/alerts/active?status=actual&severity=Extreme,Severe,Moderate");
+    if (!r.ok) throw new Error("nws " + r.status);
+    const j = await r.json();
+    nwsAlerts = (j.features || []).filter((f) => f.geometry && (f.geometry.type === "Polygon" || f.geometry.type === "MultiPolygon"));
+    if (map.getSource("nws-alerts")) map.getSource("nws-alerts").setData({ type: "FeatureCollection", features: nwsAlerts });
+    checkRouteWeather();
+    if (navMode) checkPositionWeather();
+  } catch { /* NWS unreachable / offline — silent */ }
+}
+function ensureAlertFeed() {
+  ensureWeatherLayers();
+  if (!weatherTimer) { fetchAlerts(); weatherTimer = setInterval(fetchAlerts, 4 * 60 * 1000); }  // NWS updates a few min
+}
+function maybeStopAlertFeed() { if (!weatherOn && !navMode && weatherTimer) { clearInterval(weatherTimer); weatherTimer = null; } }
+async function setWeather(on) {
+  weatherOn = on; btnWeather && btnWeather.classList.toggle("active", on);
+  ensureWeatherLayers();
+  ["nws-fill", "nws-line"].forEach((l) => map.getLayer(l) && map.setLayoutProperty(l, "visibility", on ? "visible" : "none"));
+  if (on) { warnedAlerts.clear(); ensureAlertFeed(); } else maybeStopAlertFeed();
+}
+btnWeather && btnWeather.addEventListener("click", () => setWeather(!weatherOn));
+
+// Dependency-free point-in-polygon (ray casting), Polygon + MultiPolygon with holes.
+function pointInRing(pt, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > pt[1]) !== (yj > pt[1])) && (pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function pointInGeom(pt, geom) {
+  const polys = geom.type === "Polygon" ? [geom.coordinates] : geom.type === "MultiPolygon" ? geom.coordinates : [];
+  for (const poly of polys) {
+    if (!poly.length || !pointInRing(pt, poly[0])) continue;
+    let inHole = false;
+    for (let h = 1; h < poly.length; h++) if (pointInRing(pt, poly[h])) { inHole = true; break; }
+    if (!inHole) return true;
+  }
+  return false;
+}
+const alertsAt = (pt) => nwsAlerts.filter((a) => pointInGeom(pt, a.geometry));
+function warnAlert(a, prefix) {
+  const id = a.id || (a.properties && a.properties.id) || ((a.properties && a.properties.event) + "|" + (a.properties && a.properties.areaDesc));
+  if (warnedAlerts.has(id)) return;
+  warnedAlerts.add(id);
+  const ev = (a.properties && a.properties.event) || "Weather alert";
+  showError(`⚠ ${prefix} ${escapeHtml(ev)}`);
+  speak(`${prefix} ${ev}.`);
+}
+// Bad weather ALONG the route (sample the line ahead, up to ~120 mi).
+function checkRouteWeather() {
+  if (!nwsAlerts.length || !routeLine) return;
+  const startS = navMode ? navS : 0;
+  for (let d = 0; d <= Math.min(routeTotal - startS, 200000); d += 3000) {
+    const p = pointAtS(startS + d); if (!p) break;
+    for (const a of alertsAt(p.pt)) warnAlert(a, "On your route:");
+  }
+}
+// Entering a bad-weather area while navigating.
+function checkPositionWeather() {
+  if (!nwsAlerts.length || !navUserPos) return;
+  for (const a of alertsAt(navUserPos)) warnAlert(a, "Entering");
+}
 
 /* ================= find places (POI: Overpass primary, TomTom fallback) =================
  * Idle → search near you/map-center (sort by distance). Navigating → search a

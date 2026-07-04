@@ -9,7 +9,7 @@
  *  - Live data (/traffic*, /geocode/, /nominatim/, /route/): NETWORK-ONLY —
  *    stale traffic/routing is worse than none; the app already degrades.
  */
-const SHELL_CACHE = "wf-shell-v24";
+const SHELL_CACHE = "wf-shell-v25";
 const TILE_CACHE = "wf-tiles-v1";
 const SHELL_PRECACHE = [
   "/", "/index.html", "/app.js", "/geofence.js", "/style.css",
@@ -36,7 +36,7 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-const LIVE_ONLY = /^\/(traffic|traffic-flow|geocode|nominatim|route|tts|stt|llm)(\/|$)/;
+const LIVE_ONLY = /^\/(traffic|traffic-flow|geocode|nominatim|route|tts|stt|llm|nws|overpass|poi|poi-search)(\/|$)/;
 const TILEISH = /^\/(tiles|martin|terrarium)\//;
 
 async function networkFirst(req, cacheName) {
