@@ -180,6 +180,11 @@ body.nav-active .maplibregl-user-location-accuracy-circle { display: none; }
 .muted { color: var(--muted); font-size: 12px; }
 .error { background: rgba(198,40,40,.15); border: 1px solid var(--danger); color: #ffb4b4;
   border-radius: 8px; padding: 9px; font-size: 12px; }
+/* Inline confirm (e.g. "Change your route?" while navigating) */
+#error .cfm { display: inline-flex; gap: 6px; margin-left: 8px; }
+#error .cfm button { padding: 3px 11px; border-radius: 6px; cursor: pointer; font-size: 12px; border: 1px solid var(--line); }
+#error .cfm-y { background: var(--accent); color: #fff; border-color: var(--accent-2); font-weight: 700; }
+#error .cfm-n { background: transparent; color: var(--text); }
 .hidden { display: none; }
 
 .maplibregl-popup-content { background: var(--panel-2); color: var(--text); border-radius: 8px; font-size: 12px; }

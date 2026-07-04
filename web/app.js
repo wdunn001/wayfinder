@@ -1103,14 +1103,17 @@ async function handleVoiceCommand(text, cmd) {
     await runPlaceSearch({ cat: cmd.category, along });
     const kind = catOf(cmd.category).label.split(" ")[1].toLowerCase();
     if (!placesResults.length) { speak(`I couldn't find any ${kind} ${along ? "along your route" : "nearby"}.`); return; }
+    // While navigating, a category ask just SHOWS options on the route — the
+    // user taps "Add" to drop it in as a waypoint (no silent route change).
+    if (navMode) { speak(`Found ${placesResults.length} ${kind} along your route. Tap Add to stop at one.`); return; }
     if (navigate) { speak(`Getting directions to ${placesResults[0].name}.`); routeToPoint(placesResults[0]); }
-    else speak(`Found ${placesResults.length} ${kind} ${along ? "along your route" : "nearby"}.`);
+    else speak(`Found ${placesResults.length} ${kind} nearby.`);
     return;
   }
   const q = cmd.query || text;
   const res = await geocodeForward(q, 1).catch(() => []);
   if (!res[0]) { doSearch(q); speak(`Searching for ${q}.`); return; }
-  if (navigate) { speak(`Getting directions to ${res[0].label}.`); routeToPoint(res[0]); }
+  if (navigate) { speak(`Getting directions to ${res[0].label}.`); requestRouteTo(res[0]); }  // confirms if navigating
   else { lastResults = res; renderResults(); }
 }
 // Route from my location (seeded if needed) to a {lat,lng,name|label} point.
@@ -1254,12 +1257,15 @@ function exitNav() {
   try { map.easeTo({ bearing: 0, pitch: is3D ? 55 : 0, duration: 500 }); } catch { /* map not ready */ }
   updateHeader();
 }
-async function reroute() {
-  if (rerouting || !navUserPos || !stops.length) return;
-  rerouting = true; offRouteCount = 0; speak("Rerouting.");
+// Recompute the live nav route from the current position through the given
+// waypoints ([lng,lat]…), and re-seat nav on the new line. Used for off-route
+// reroute and for adding a stop on the way without leaving navigation.
+async function liveReroute(waypoints, msg) {
+  if (rerouting || !navUserPos || !waypoints.length) return false;
+  rerouting = true; offRouteCount = 0; if (msg) speak(msg);
   try {
-    const dest = stops[stops.length - 1];
-    const r = await fetch(`${OSRM}/route/v1/driving/${navUserPos[0]},${navUserPos[1]};${dest.lng},${dest.lat}?overview=full&geometries=geojson&alternatives=false&steps=true`);
+    const coords = [navUserPos, ...waypoints].map((c) => `${c[0]},${c[1]}`).join(";");
+    const r = await fetch(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false&steps=true`);
     const j = await r.json();
     if (j.code === "Ok" && j.routes && j.routes[0]) {
       currentRoutes = [j.routes[0]]; selectedRouteIdx = 0;
@@ -1267,9 +1273,23 @@ async function reroute() {
       renderRoutes(false); renderSteps(); resetPrompts();
       const pr = projectToRoute(navUserPos); if (pr) { navS = pr.s; navLastFixS = pr.s; }
       evaluateRoutesTraffic().catch(() => {});
+      return true;
     }
-  } catch { /* keep the old line; retry on the next off-route fix */ }
+  } catch { /* keep the old line */ }
   finally { rerouting = false; }
+  return false;
+}
+async function reroute() {
+  const dest = stops[stops.length - 1]; if (!dest) return;
+  await liveReroute([[dest.lng, dest.lat]], "Rerouting.");
+}
+// Add a place as a WAYPOINT on the current drive (before the final destination)
+// and reroute live — so "find gas along the route" → Add doesn't abandon the trip.
+async function addWaypointLive(p) {
+  const dest = stops[stops.length - 1]; if (!dest) return;
+  stops.splice(Math.max(1, stops.length - 1), 0, { localId: newId(), lat: p.lat, lng: p.lng, label: p.name || p.label });
+  render();
+  if (!await liveReroute([[p.lng, p.lat], [dest.lng, dest.lat]], `Adding ${p.name || "stop"} on the way.`)) speak("Couldn't add that stop.");
 }
 async function acquireWakeLock() { try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch { /* denied */ } }
 function releaseWakeLock() { try { wakeLock && wakeLock.release(); } catch { /* already gone */ } wakeLock = null; }
@@ -1338,7 +1358,7 @@ function updateHeader() {
   bExit && bExit.classList.toggle("hidden", !navMode);
   bMute && bMute.classList.toggle("hidden", !navMode);
   bLock && bLock.classList.toggle("hidden", !navMode);
-  bMic && bMic.classList.toggle("hidden", navMode);
+  bMic && bMic.classList.remove("hidden");   // mic stays available during navigation (search along route)
   if (bMute) { bMute.textContent = voiceMuted ? "🔇" : "🔊"; bMute.classList.toggle("muted", voiceMuted); }
   if (!navMode) { const bRe = document.getElementById("btn-recenter"); if (bRe) bRe.classList.add("hidden"); }
 
@@ -1626,10 +1646,29 @@ function flyToPlace(i) {
 function directionsToPlace(i) {
   const r = placesResults[i]; if (!r) return;
   if (placePopup) { placePopup.remove(); placePopup = null; }
-  routeToPoint(r);
+  requestRouteTo(r);
+}
+// Route to a point, but if we're mid-navigation, CONFIRM first (a new route
+// abandons the current drive) — voice/taps can't silently stop navigation.
+function requestRouteTo(p) {
+  if (navMode) {
+    const label = p.name || p.label || "there";
+    speak(`Change your route to ${label}?`);
+    confirmBanner(`Change your route to ${escapeHtml(label)}?`, () => { exitNav(); routeToPoint(p); });
+  } else routeToPoint(p);
+}
+function confirmBanner(msg, onYes) {
+  const e = document.getElementById("error");
+  e.innerHTML = `${msg} <span class="cfm"><button id="cfm-yes" class="cfm-y">Yes</button><button id="cfm-no" class="cfm-n">No</button></span>`;
+  e.classList.remove("hidden");
+  const yes = document.getElementById("cfm-yes"), no = document.getElementById("cfm-no");
+  if (yes) yes.onclick = () => { e.classList.add("hidden"); e.innerHTML = ""; onYes(); };
+  if (no) no.onclick = () => { e.classList.add("hidden"); e.innerHTML = ""; };
 }
 function addPlaceAsStop(i) {
   const r = placesResults[i]; if (!r) return;
+  if (placePopup) { placePopup.remove(); placePopup = null; }
+  if (navMode && routeLine && navUserPos && stops.length >= 1) { addWaypointLive(r); return; }  // waypoint on the way
   stops.push({ localId: newId(), lat: r.lat, lng: r.lng, label: r.name });
   clearRoute(); clearError(); render();
 }
