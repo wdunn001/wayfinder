@@ -209,6 +209,7 @@ geoCtl.on("geolocate", (e) => {
     }
     if (navMode) onNavFix(e);   // update speed/heading/along-route + off-route check
     advanceNav();
+    updateLocalWeather();       // current-conditions chip in the app bar (throttled ~15 min)
   }
 });
 // Auto-locate on first load so the permission prompt appears without hunting
@@ -861,8 +862,18 @@ function hideSummary() {
   currentSteps = []; navIdx = 0;
   updateDrawerLauncher();
 }
-function showError(msg) { const e = document.getElementById("error"); e.textContent = msg; e.classList.remove("hidden"); }
-function clearError() { document.getElementById("error").classList.add("hidden"); }
+function showError(msg) { const e = document.getElementById("error"); e.classList.remove("info"); e.textContent = msg; e.classList.remove("hidden"); }
+// Self-dismissing blue notification (weather/traffic alerts) — survives the
+// per-GPS-fix clearError (it's .info) and won't stomp an active confirm/countdown.
+function notify(msg) {
+  const e = document.getElementById("error");
+  if (e.querySelector(".cfm")) return;
+  e.textContent = msg; e.classList.remove("hidden"); e.classList.add("info");
+  clearTimeout(notify._t); notify._t = setTimeout(() => { if (!e.querySelector(".cfm")) { e.classList.add("hidden"); e.classList.remove("info"); e.textContent = ""; } }, 8000);
+}
+// Don't clear an active prompt (confirm .cfm / faster-route countdown / a live
+// .info notification) — only transient errors.
+function clearError() { const e = document.getElementById("error"); if (e.querySelector(".cfm") || e.classList.contains("info")) return; e.classList.add("hidden"); }
 function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 /* ---------- left drawer: collapse + summary launcher ----------
@@ -1297,6 +1308,9 @@ async function startNav() {
   try { const c = getAudioCtx(); if (c.state === "suspended") await c.resume(); } catch { /* gesture needed */ }
   resetPrompts(); primeFragments(); offRouteCount = 0; navSpeed = 0;   // pre-synth the fixed phrase clips
   warnedAlerts.clear(); ensureAlertFeed();   // auto weather warnings while driving (layer hidden unless Weather is on)
+  heavyWarned = false;
+  if (!navTrafficTimer) navTrafficTimer = setInterval(navTrafficCheck, 75000);   // re-check traffic + faster routes
+  setTimeout(navTrafficCheck, 25000);
   following = true;
   const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
   // One-time: a real user gesture (has originalEvent) breaks follow; our own
@@ -1323,6 +1337,7 @@ function exitNav() {
   if (puckMarker) { puckMarker.remove(); puckMarker = null; }
   const rb = document.getElementById("btn-recenter"); if (rb) rb.classList.add("hidden");
   releaseWakeLock(); maybeStopAlertFeed();
+  if (navTrafficTimer) { clearInterval(navTrafficTimer); navTrafficTimer = null; } clearFaster();
   try { map.easeTo({ bearing: 0, pitch: is3D ? 55 : 0, duration: 500 }); } catch { /* map not ready */ }
   updateHeader();
 }
@@ -1495,6 +1510,57 @@ function updateDrawerLauncher() { updateHeader(); }
   setCollapsed(start === "1", false);
 })();
 
+/* ================= live traffic during nav: "heavy traffic ahead" + faster route =================
+ * Every ~75 s while navigating, re-request alternatives from the current
+ * position, score them with TomTom flow, warn on a jam ahead, and offer a
+ * faster route with a 10 s countdown that auto-switches. */
+let navTrafficTimer = null, fasterPromptActive = false, fasterTimer = null, heavyWarned = false;
+async function navTrafficCheck() {
+  if (!navMode || !navUserPos || !stops.length || rerouting || fasterPromptActive || !trafficEvalUsable) return;
+  const dest = stops[stops.length - 1];
+  try {
+    const r = await fetch(`${OSRM}/route/v1/driving/${navUserPos[0]},${navUserPos[1]};${dest.lng},${dest.lat}?overview=full&geometries=geojson&alternatives=true&steps=true`);
+    const j = await r.json();
+    if (j.code !== "Ok" || !j.routes || !j.routes.length) return;
+    const cands = j.routes;
+    await Promise.all(cands.map(async (rt) => { try { const f = await flowFactor(rt); if (f) { rt._factor = f.factor; rt._adjusted = rt.duration / f.factor; rt._samples = f.samples; } } catch { /* skip */ } }));
+    const cur = cands[0];                                   // OSRM primary ≈ the road you're on
+    // Heavy traffic ahead on the near portion of the current route?
+    const n = cur.geometry.coordinates.length;
+    const nearJam = (cur._samples || []).some((s) => s.ratio < 0.6 && s.idx < n * 0.45);
+    if (nearJam && !heavyWarned) { heavyWarned = true; speak("Heavy traffic ahead."); notify("🚦 Heavy traffic ahead."); setTimeout(() => { heavyWarned = false; }, 5 * 60 * 1000); }
+    // A meaningfully faster alternative?
+    const fastest = cands.reduce((b, rt) => ((rt._adjusted ?? rt.duration) < (b._adjusted ?? b.duration) ? rt : b), cur);
+    const save = (cur._adjusted ?? cur.duration) - (fastest._adjusted ?? fastest.duration);
+    if (fastest !== cur && save > 120) proposeFasterRoute(fastest, Math.round(save));   // saves > 2 min
+  } catch { /* OSRM/traffic hiccup — try again next tick */ }
+}
+function proposeFasterRoute(rt, saveSecs) {
+  fasterPromptActive = true;
+  const mins = fmtDur(saveSecs);
+  speak(`There's a faster route, saving ${mins}.`);
+  let secs = 10;
+  const e = document.getElementById("error"); e.classList.add("info");
+  e.innerHTML = `🚦 Faster route — saves ${mins}. Switching in <span id="fr-count">${secs}</span>s ` +
+    `<span class="cfm"><button id="fr-yes" class="cfm-y">Switch now</button><button id="fr-no" class="cfm-n">Keep</button></span>`;
+  e.classList.remove("hidden");
+  const doSwitch = () => { clearFaster(); switchToRoute(rt); };
+  document.getElementById("fr-yes").onclick = doSwitch;
+  document.getElementById("fr-no").onclick = () => clearFaster();
+  fasterTimer = setInterval(() => { secs--; const c = document.getElementById("fr-count"); if (secs <= 0) doSwitch(); else if (c) c.textContent = secs; }, 1000);
+}
+function clearFaster() {
+  fasterPromptActive = false;
+  if (fasterTimer) { clearInterval(fasterTimer); fasterTimer = null; }
+  const e = document.getElementById("error"); e.classList.add("hidden"); e.classList.remove("info"); e.innerHTML = "";
+}
+function switchToRoute(rt) {
+  currentRoutes = [rt]; selectedRouteIdx = 0; setRouteLine(rt.geometry.coordinates);
+  renderRoutes(false); renderSteps(); resetPrompts();
+  const pr = projectToRoute(navUserPos); if (pr) { navS = pr.s; navLastFixS = pr.s; }
+  speak("Taking the faster route.");
+}
+
 /* ================= NWS weather alerts (layer + route/position warnings) =================
  * Layer styling matches the mzfs fleet map (severity-keyed fill/line). mzfs has
  * no route-vs-alert check, so the "bad weather on your route / entering an area"
@@ -1571,12 +1637,43 @@ function pointInGeom(pt, geom) {
   return false;
 }
 const alertsAt = (pt) => nwsAlerts.filter((a) => pointInGeom(pt, a.geometry));
+
+/* ---------- current weather near you (NWS point → hourly), shown in the app bar ---------- */
+let localWxAt = 0;
+function wxEmoji(short) {
+  const s = (short || "").toLowerCase();
+  if (/thunder|storm/.test(s)) return "⛈️";
+  if (/snow|flurr|sleet|ice|blizzard|winter/.test(s)) return "🌨️";
+  if (/rain|shower|drizzle/.test(s)) return "🌧️";
+  if (/fog|haze|mist/.test(s)) return "🌫️";
+  if (/cloud|overcast/.test(s)) return /partly|mostly sunny/.test(s) ? "⛅" : "☁️";
+  if (/clear|sunny|fair/.test(s)) return "☀️";
+  return "🌡️";
+}
+async function updateLocalWeather(force) {
+  if (!navUserPos) return;
+  const now = performance.now();
+  if (!force && now - localWxAt < 15 * 60 * 1000) return;   // refresh ~15 min
+  localWxAt = now;
+  try {
+    const pj = await (await fetch(`/nws/points/${navUserPos[1].toFixed(4)},${navUserPos[0].toFixed(4)}`)).json();
+    const hourly = pj.properties && pj.properties.forecastHourly;
+    if (!hourly) return;
+    const fj = await (await fetch(hourly.replace(/^https?:\/\/api\.weather\.gov/, "/nws"))).json();
+    const p0 = fj.properties && fj.properties.periods && fj.properties.periods[0];
+    if (!p0) return;
+    const el = document.getElementById("appbar-weather"); if (!el) return;
+    el.innerHTML = `<span class="wx-emoji">${wxEmoji(p0.shortForecast)}</span><span class="wx-temp">${p0.temperature}°</span>`;
+    el.title = p0.shortForecast || "Current weather";
+    el.classList.remove("hidden");
+  } catch { /* NWS point forecast unavailable */ }
+}
 function warnAlert(a, prefix) {
   const id = a.id || (a.properties && a.properties.id) || ((a.properties && a.properties.event) + "|" + (a.properties && a.properties.areaDesc));
   if (warnedAlerts.has(id)) return;
   warnedAlerts.add(id);
   const ev = (a.properties && a.properties.event) || "Weather alert";
-  showError(`⚠ ${prefix} ${escapeHtml(ev)}`);
+  notify(`⚠ ${prefix} ${ev}`);
   speak(`${prefix} ${ev}.`);
 }
 // Bad weather ALONG the route (sample the line ahead, up to ~120 mi).
