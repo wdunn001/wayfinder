@@ -229,6 +229,47 @@ map.on("error", (e) => {
   console.warn("[map]", msg);
 });
 
+/* ---------- deep-links (maps.quasarke.net/?…) ---------- */
+// Lets an external tool (e.g. the geo MCP server) hand the user a link that opens
+// the map pre-loaded with a marker or a full route. Parsed inside map.on("load")
+// so the route sources/layers + the #btn-route handler already exist, and BEFORE
+// the idle→auto-geolocate fires (its `stops.length===0` guard then won't seed over
+// a supplied origin). Two forms, both coordinate-based (the tool geocodes first):
+//   marker: ?lat=38.8977&lon=-77.0365&label=White%20House&z=15
+//   route:  ?from=38.9072,-77.0369&to=39.2904,-76.6122&via=39.0,-76.9|39.1,-76.8
+function applyDeepLink() {
+  const p = new URLSearchParams(location.search);
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const parseLL = (s) => {
+    if (!s) return null;
+    const parts = String(s).split(",");
+    if (parts.length !== 2) return null;
+    const la = num(parts[0]), lo = num(parts[1]);
+    if (la === null || lo === null || Math.abs(la) > 90 || Math.abs(lo) > 180) return null;
+    return { lat: la, lng: lo };
+  };
+  const from = parseLL(p.get("from")), to = parseLL(p.get("to"));
+  if (from && to) {                                   // route form
+    const via = (p.get("via") || "").split("|").map(parseLL).filter(Boolean);
+    stops = [{ localId: newId(), lat: from.lat, lng: from.lng, label: p.get("fromLabel") || "Start", origin: true }];
+    via.forEach((w, i) => stops.push({ localId: newId(), lat: w.lat, lng: w.lng, label: `Stop ${i + 1}` }));
+    stops.push({ localId: newId(), lat: to.lat, lng: to.lng, label: p.get("toLabel") || "Destination" });
+    render();
+    const btn = document.getElementById("btn-route");
+    if (btn && !btn.disabled) btn.click();            // render() enables it at ≥2 stops
+    return true;
+  }
+  const lat = num(p.get("lat")), lon = num(p.get("lon"));  // marker form
+  if (lat !== null && lon !== null && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+    stops = [{ localId: newId(), lat, lng: lon, label: p.get("label") || `${lat.toFixed(5)}, ${lon.toFixed(5)}` }];
+    render();
+    const z = num(p.get("z"));
+    map.flyTo({ center: [lon, lat], zoom: z !== null ? z : 15 });
+    return true;
+  }
+  return false;
+}
+
 map.on("load", () => {
   // Alternative routes (grey, clickable) render beneath the selected route.
   map.addSource("route-alt", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -288,6 +329,9 @@ map.on("load", () => {
       "fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
     },
   }, "route-line");
+
+  // Open a place/route if the URL carries deep-link params (never blocks boot).
+  try { applyDeepLink(); } catch (e) { console.warn("[deeplink]", e); }
 });
 
 /* ---------- 3D mode (tilt + building extrusions) ---------- */
