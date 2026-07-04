@@ -251,6 +251,34 @@ body:not(.layers-tab) .maplibregl-ctrl-top-right { display: none; }
   background: var(--panel-2); color: var(--text); cursor: pointer; font-size: 13px; }
 .add-stop.active { border-style: solid; border-color: var(--accent-2); background: var(--accent); color: #fff; font-weight: 600; }
 
+/* ---------- find places (POI) ---------- */
+.places-panel { border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.places-panel > summary { cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 7px; padding: 2px 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.places-panel > summary::-webkit-details-marker { display: none; }
+.places-panel > summary::before { content: "▸"; color: var(--muted); transition: transform .15s; }
+.places-panel[open] > summary::before { transform: rotate(90deg); }
+.places-body { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.cat-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 14px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 12px; }
+.chip:hover { border-color: var(--accent-2); }
+.chip.active { background: var(--accent); border-color: var(--accent-2); color: #fff; font-weight: 600; }
+.places-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.places-sort { background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; font-size: 12px; padding: 3px 6px; }
+.places-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.place-row { display: flex; align-items: center; gap: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+.place-row .pidx { width: 20px; height: 20px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--accent); }
+.place-row .pmain { flex: 1; min-width: 0; }
+.place-row .pname { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-row .psub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-row .padd { flex: none; background: var(--accent); border: 1px solid var(--accent-2); color: #fff;
+  cursor: pointer; font-size: 11px; border-radius: 6px; padding: 3px 8px; }
+.place-row .padd.ghost { background: transparent; color: var(--muted); border-color: var(--line); }
+
 /* ---------- mobile: drawer is a slide-in overlay, dismissible via collapse ---------- */
 @media (max-width: 640px) {
   .panel { width: min(340px, 88vw); border-radius: 0 16px 16px 0; padding: 12px; }

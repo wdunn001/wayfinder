@@ -1219,4 +1219,145 @@ function updateDrawerLauncher() { updateHeader(); }
   setCollapsed(start === "1", false);
 })();
 
+/* ================= find places (POI: Overpass primary, TomTom fallback) =================
+ * Idle → search near you/map-center (sort by distance). Navigating → search a
+ * corridor ALONG the route ahead (sort by soonest-on-route). Results are
+ * numbered pins on the map + a picklist; tap to preview, Add to route. */
+const CATEGORIES = [
+  { key: "fuel",     label: "⛽ Fuel",     tt: "7311", osm: '["amenity"="fuel"]' },
+  { key: "food",     label: "🍔 Food",     tt: "7315", osm: '["amenity"="restaurant"]' },
+  { key: "coffee",   label: "☕ Coffee",   tt: "9376", osm: '["amenity"="cafe"]' },
+  { key: "ev",       label: "🔌 EV",       tt: "7309", osm: '["amenity"="charging_station"]' },
+  { key: "grocery",  label: "🛒 Grocery",  tt: "7332", osm: '["shop"="supermarket"]' },
+  { key: "pharmacy", label: "💊 Pharmacy", tt: "7326", osm: '["amenity"="pharmacy"]' },
+  { key: "atm",      label: "🏧 ATM",      tt: "7397", osm: '["amenity"="atm"]' },
+  { key: "hotel",    label: "🏨 Hotel",    tt: "7314", osm: '["tourism"="hotel"]' },
+  { key: "parking",  label: "🅿️ Parking",  tt: "7369", osm: '["amenity"="parking"]' },
+  { key: "hospital", label: "🏥 Hospital", tt: "7321", osm: '["amenity"="hospital"]' },
+];
+const catOf = (k) => CATEGORIES.find((c) => c.key === k);
+let placesResults = [], placesActiveCat = null, overpassOk = true;
+
+function renderChips() {
+  const box = document.getElementById("cat-chips"); if (!box) return;
+  box.innerHTML = "";
+  for (const c of CATEGORIES) {
+    const b = document.createElement("button");
+    b.className = "chip" + (placesActiveCat === c.key ? " active" : "");
+    b.textContent = c.label;
+    b.onclick = () => findPlaces(c.key);
+    box.appendChild(b);
+  }
+}
+// Sample points from the current position forward along the route (~every 8 km,
+// up to ~48 km) so "along route" finds what's actually on the way ahead.
+function sampleRouteAhead() {
+  const pts = []; if (!routeLine) return pts;
+  for (let d = 0; d <= 48000; d += 8000) { const p = pointAtS(navS + d); if (p) pts.push(p.pt); if (navS + d >= routeTotal) break; }
+  return pts.length ? pts : [pointAtS(navS).pt];
+}
+function searchCenters() {
+  if (navMode && routeLine) return { along: true, pts: sampleRouteAhead() };
+  const c = navUserPos || [map.getCenter().lng, map.getCenter().lat];
+  return { along: false, pts: [c] };
+}
+async function queryOverpass(cat, pts, radius) {
+  const flat = pts.map((p) => `${p[1]},${p[0]}`).join(",");   // Overpass around: lat,lon,lat,lon,… = polyline buffer
+  const f = catOf(cat).osm;
+  const ql = `[out:json][timeout:25];(node${f}(around:${radius},${flat});way${f}(around:${radius},${flat}););out center 60;`;
+  const r = await fetch("/overpass", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "data=" + encodeURIComponent(ql) });
+  if (!r.ok) throw new Error("overpass " + r.status);
+  const j = await r.json();
+  return (j.elements || []).map((e) => {
+    const lat = e.lat ?? (e.center && e.center.lat), lng = e.lon ?? (e.center && e.center.lon);
+    if (lat == null) return null;
+    const t = e.tags || {};
+    return { id: "o" + e.type + e.id, name: t.name || t.brand || catOf(cat).label.split(" ")[1] || "Place",
+      lat, lng, addr: [t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" ") || t.brand || "" };
+  }).filter(Boolean);
+}
+async function queryTomTomAt(cat, center, radius) {
+  const r = await fetch(`/poi?lat=${center[1].toFixed(5)}&lon=${center[0].toFixed(5)}&radius=${radius}&categorySet=${catOf(cat).tt}&limit=20`);
+  if (!r.ok) throw new Error("poi " + r.status);
+  const j = await r.json();
+  return (j.results || []).map((x) => ({ id: "t" + x.id, name: (x.poi && x.poi.name) || "Place",
+    lat: x.position.lat, lng: x.position.lon, addr: (x.address && x.address.freeformAddress) || "" }));
+}
+async function queryTomTomMulti(cat, pts, radius) {
+  const all = [];
+  for (const p of pts.slice(0, 6)) { try { all.push(...await queryTomTomAt(cat, p, radius)); } catch { /* skip this sample */ } }
+  return all;
+}
+function dedupePlaces(list) {
+  const seen = new Set(), out = [];
+  for (const r of list) { const k = r.id || `${r.lat.toFixed(5)},${r.lng.toFixed(5)}`; if (seen.has(k)) continue; seen.add(k); out.push(r); }
+  return out;
+}
+async function findPlaces(cat) {
+  placesActiveCat = cat; renderChips();
+  const { along, pts } = searchCenters();
+  const ctx = document.getElementById("places-ctx"); if (ctx) ctx.textContent = along ? "along your route…" : "near you…";
+  const radius = along ? 2500 : 4000;
+  let res = [];
+  if (overpassOk) { try { res = await queryOverpass(cat, pts, radius); } catch { overpassOk = false; } } // import not done yet → TomTom
+  if (!res.length) { try { res = along ? await queryTomTomMulti(cat, pts, radius) : await queryTomTomAt(cat, pts[0], radius); } catch { /* offline */ } }
+  res = dedupePlaces(res);
+  const origin = navUserPos || pts[0];
+  for (const r of res) {
+    r.dist = haversine(origin, [r.lng, r.lat]);
+    if (along && routeLine) { const pr = projectToRoute([r.lng, r.lat]); r.s = pr ? pr.s : Infinity; }
+  }
+  placesResults = res;
+  sortPlaces();
+  if (ctx) ctx.textContent = res.length ? (along ? `${res.length} along route` : `${res.length} nearby`) : "none found";
+  const pnl = document.getElementById("places-panel"); if (pnl) pnl.open = true;
+  if (res.length && !navMode) {
+    const b = new maplibregl.LngLatBounds(); res.forEach((r) => b.extend([r.lng, r.lat])); b.extend(origin);
+    if (!b.isEmpty()) map.fitBounds(b, { padding: { top: 70, bottom: 70, left: 390, right: 70 }, maxZoom: 15 });
+  }
+}
+function sortPlaces() {
+  const mode = (document.getElementById("places-sort") || {}).value || "dist";
+  const along = navMode && routeLine;
+  placesResults.sort((a, b) => along ? ((a.s ?? Infinity) - (b.s ?? Infinity)) : (mode === "rel" ? 0 : a.dist - b.dist));
+  renderPlaces();
+}
+function ensurePlacesLayer() {
+  if (map.getSource("places")) return;
+  map.addSource("places", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "places-pins", type: "circle", source: "places",
+    paint: { "circle-radius": 13, "circle-color": "#8e24aa", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+  map.addLayer({ id: "places-num", type: "symbol", source: "places",
+    layout: { "text-field": ["get", "n"], "text-size": 12, "text-font": ["Noto Sans Regular"], "text-allow-overlap": true },
+    paint: { "text-color": "#fff" } });
+  map.on("click", "places-pins", (e) => flyToPlace(Number(e.features[0].properties.i)));
+  map.on("mouseenter", "places-pins", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "places-pins", () => { map.getCanvas().style.cursor = ""; });
+}
+function renderPlaces() {
+  ensurePlacesLayer();
+  map.getSource("places").setData({ type: "FeatureCollection",
+    features: placesResults.map((r, i) => ({ type: "Feature", geometry: { type: "Point", coordinates: [r.lng, r.lat] }, properties: { n: i + 1, i } })) });
+  const list = document.getElementById("places-list"); if (!list) return;
+  list.innerHTML = placesResults.map((r, i) =>
+    `<li class="place-row" data-i="${i}"><span class="pidx">${i + 1}</span>` +
+    `<span class="pmain"><span class="pname">${escapeHtml(r.name)}</span>` +
+    `<span class="psub">${fmtDistImperialShort(r.dist)}${r.addr ? " · " + escapeHtml(r.addr) : ""}</span></span>` +
+    `<button class="padd" data-i="${i}">Add</button></li>`).join("");
+  list.querySelectorAll(".place-row").forEach((li) => li.addEventListener("click", (e) => { if (!e.target.classList.contains("padd")) flyToPlace(Number(li.dataset.i)); }));
+  list.querySelectorAll(".padd").forEach((b) => b.addEventListener("click", () => addPlaceAsStop(Number(b.dataset.i))));
+}
+function flyToPlace(i) {
+  const r = placesResults[i]; if (!r) return;
+  map.flyTo({ center: [r.lng, r.lat], zoom: Math.max(map.getZoom(), 15) });
+  new maplibregl.Popup({ offset: 16 }).setLngLat([r.lng, r.lat]).setHTML(`<b>${escapeHtml(r.name)}</b>${r.addr ? "<br>" + escapeHtml(r.addr) : ""}`).addTo(map);
+}
+function addPlaceAsStop(i) {
+  const r = placesResults[i]; if (!r) return;
+  stops.push({ localId: newId(), lat: r.lat, lng: r.lng, label: r.name });
+  clearRoute(); clearError(); render();
+}
+document.getElementById("places-sort") && (document.getElementById("places-sort").onchange = sortPlaces);
+renderChips();
+
 render();

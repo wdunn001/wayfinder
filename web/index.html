@@ -98,6 +98,23 @@
         </div><!-- .rb-body -->
       </details><!-- #route-builder -->
 
+      <!-- Find places (POI): category chips search near you, or ALONG your route
+           while navigating; results are numbered pins on the map + this list. -->
+      <details id="places-panel" class="places-panel">
+        <summary>Find places</summary>
+        <div class="places-body">
+          <div id="cat-chips" class="cat-chips"></div>
+          <div class="places-head">
+            <span id="places-ctx" class="muted"></span>
+            <select id="places-sort" class="places-sort" title="Sort results">
+              <option value="dist">Nearest</option>
+              <option value="rel">Best match</option>
+            </select>
+          </div>
+          <ol id="places-list" class="places-list"></ol>
+        </div>
+      </details>
+
       <div id="summary" class="summary hidden"></div>
       <!-- Turn-by-turn maneuver list (from OSRM steps). The current step is
            highlighted and mirrored into the collapsed launcher pill as you move. -->
