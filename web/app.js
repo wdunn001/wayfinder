@@ -1206,7 +1206,10 @@ async function startNav() {
   resetPrompts(); primeFragments(); offRouteCount = 0; navSpeed = 0;   // pre-synth the fixed phrase clips
   const seed = navUserPos ? projectToRoute(navUserPos) : null;
   navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
-  try { map.easeTo({ zoom: 18, pitch: is3D ? 60 : 0, duration: 500 }); } catch { /* map not ready */ }
+  // jumpTo (instant), NOT easeTo: the follow loop's per-frame jumpTo omits zoom,
+  // so an animated easeTo gets interrupted and the zoom never lands — leaving the
+  // far-out route-overview zoom. Snap to a close nav zoom; the loop preserves it.
+  try { map.jumpTo({ zoom: 18.5, pitch: is3D ? 60 : 0 }); } catch { /* map not ready */ }
   acquireWakeLock();
   try { geoCtl.trigger(); } catch { /* already tracking */ }
   if (!navRAF) navRAF = requestAnimationFrame(navTick);
