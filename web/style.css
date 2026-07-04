@@ -13,7 +13,12 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); }
-#map { position: absolute; inset: 0; background: #0e1216; }
+#map { position: absolute; inset: 0; background: #0e1216; transition: left .24s cubic-bezier(.4,0,.2,1); }
+/* Desktop: an open drawer PUSHES the map right (shrinks it) instead of overlapping. */
+@media (min-width: 641px) {
+  body.drawer-open #map { left: 360px; }
+  body.drawer-open .panel { border-radius: 0; box-shadow: none; }   /* clean butt-join with the map */
+}
 
 /* ---------- full-width top app bar (nav HUD + burger) ---------- */
 .appbar {

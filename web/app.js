@@ -1538,7 +1538,10 @@ function updateDrawerLauncher() { updateHeader(); }
 
   function setCollapsed(collapsed, persist = true) {
     panel.classList.toggle("collapsed", collapsed);
+    document.body.classList.toggle("drawer-open", !collapsed);   // desktop CSS pushes #map right
     collapseBtn && collapseBtn.setAttribute("aria-expanded", String(!collapsed));
+    // The map container width changes when it's pushed — let MapLibre re-fit after the slide.
+    setTimeout(() => { try { window.nomadMap && window.nomadMap.resize(); } catch { /* not ready */ } }, 280);
     if (persist) { try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch { /* private mode */ } }
   }
   window.wfSetDrawerCollapsed = setCollapsed;
