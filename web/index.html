@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Wayfinder — Maps &amp; Directions</title>
   <!-- use-credentials: the manifest is fetched WITHOUT cookies by default, so
-       behind Authentik forward-auth it 302s and the browser sees no valid
-       manifest (= no install prompt). Credentials make it ride the session. -->
+       behind an authenticating reverse proxy (forward-auth / SSO) it 302s and
+       the browser sees no valid manifest (= no install prompt). Credentials
+       make it ride the session. -->
   <link rel="manifest" href="manifest.json" crossorigin="use-credentials" />
   <meta name="theme-color" content="#1b1f24" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />

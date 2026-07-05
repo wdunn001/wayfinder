@@ -1,0 +1,31 @@
+# Public CI — build the Wayfinder Docker image on every push / PR to verify it
+# compiles cleanly. Build only; no registry push and no deploy (this repo carries
+# no deployment secrets). Self-hosters can layer their own deploy on top.
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build image
+        # MapLibre + Terra Draw are vendored in-repo, so the build is fully
+        # offline aside from pulling the public nginx base image.
+        run: docker build -t wayfinder:ci .
+      - name: Smoke-test that the image boots and serves the SPA
+        run: |
+          set -eu
+          docker run -d --name wayfinder-ci -p 8080:80 wayfinder:ci
+          # Give nginx a moment to render the envsubst template and start.
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8080/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          docker rm -f wayfinder-ci >/dev/null 2>&1 || true
+          test "${ok:-0}" = 1 || { echo "container did not serve / within 15s"; exit 1; }

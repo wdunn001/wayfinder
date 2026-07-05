@@ -1,7 +1,21 @@
-# Wayfinder CI/CD — build the offline nginx image (vendoring MapLibre + Terra Draw)
-# and (re)deploy the container on .88. The Forgejo runner runs ON .88 with the
-# Docker socket, so build + deploy are both local — no SSH. Inline `run:` only
-# (the runner can't resolve `uses:` actions).
+# Wayfinder CI/CD (Forgejo) — build the offline nginx image (MapLibre + Terra
+# Draw are vendored in-repo) and (re)deploy the container. Designed for a runner
+# that runs ON the deploy host with access to the Docker socket, so build +
+# deploy are both local (no SSH). Inline `run:` only (some runners can't resolve
+# `uses:` actions).
+#
+# All site-specific values come from Forgejo Actions variables/secrets so nothing
+# host-specific is committed. Set these in the repo/org settings before first run:
+#   vars.REGISTRY        — registry host:port that also serves this Forgejo repo
+#                          over HTTP (e.g. registry.example.com:3000)
+#   vars.CONTAINER_NAME  — name for the deployed container (e.g. wayfinder)
+#   vars.HOST_PORT       — published host port (optional; defaults to 8442)
+#   vars.ENV_FILE_PATH   — path on the deploy host to the runtime env-file
+#                          (TOMTOM_API_KEY + *_UPSTREAM + WAYFINDER_* flags);
+#                          this file is NEVER committed. Optional — deploy still
+#                          works (all features fall back to defaults) if unset.
+#   secrets.REGISTRY_USER / secrets.REGISTRY_TOKEN — registry push credentials
+#                          (optional; falls back to the job token).
 name: deploy-wayfinder
 on:
   push:
@@ -13,36 +27,46 @@ jobs:
     runs-on: docker
     env:
       REPO_TOKEN: ${{ github.token }}
-      FORGEJO_REGISTRY_USER: ${{ secrets.FORGEJO_REGISTRY_USER }}
-      FORGEJO_REGISTRY_TOKEN: ${{ secrets.FORGEJO_REGISTRY_TOKEN }}
+      REGISTRY: ${{ vars.REGISTRY }}
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+      CONTAINER_NAME: ${{ vars.CONTAINER_NAME }}
+      HOST_PORT: ${{ vars.HOST_PORT }}
+      ENV_FILE_PATH: ${{ vars.ENV_FILE_PATH }}
     steps:
       - name: Build, push & deploy Wayfinder
         run: |
           set -eu
           apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates docker.io >/dev/null
-          git clone -q "http://token:${REPO_TOKEN}@192.168.1.88:8530/${GITHUB_REPOSITORY}.git" /tmp/repo
+          : "${REGISTRY:?set the REGISTRY Actions variable}"
+          NAME="${CONTAINER_NAME:-wayfinder}"
+          PORT="${HOST_PORT:-8442}"
+          # Clone this repo from the Forgejo instance the runner belongs to.
+          git clone -q "http://token:${REPO_TOKEN}@${REGISTRY}/${GITHUB_REPOSITORY}.git" /tmp/repo
           cd /tmp/repo && git checkout -q "${GITHUB_SHA}" 2>/dev/null || true
-          IMG=192.168.1.88:8530/wdunn001/wayfinder:latest
+          IMG="${REGISTRY}/${GITHUB_REPOSITORY}:latest"
           # login: prefer a registry PAT, else the job's own github.token
-          echo "${FORGEJO_REGISTRY_TOKEN:-$REPO_TOKEN}" \
-            | docker login 192.168.1.88:8530 -u "${FORGEJO_REGISTRY_USER:-${GITHUB_ACTOR:-token}}" --password-stdin
-          # Dockerfile vendors MapLibre + Terra Draw from the internet at build time.
+          echo "${REGISTRY_TOKEN:-$REPO_TOKEN}" \
+            | docker login "${REGISTRY}" -u "${REGISTRY_USER:-${GITHUB_ACTOR:-token}}" --password-stdin
+          # Dockerfile vendors MapLibre + Terra Draw from source (offline build).
           docker build -t "$IMG" .
-          # Registry push is best-effort: the job's auto-token lacks package-write
-          # on the org namespace (reqPackageAccess). Build + deploy are on the
-          # same host, so the local image is what actually ships; set
-          # FORGEJO_REGISTRY_USER/TOKEN secrets to make the push stick.
+          # Registry push is best-effort: the job's auto-token may lack
+          # package-write on the org namespace. Build + deploy are on the same
+          # host, so the local image is what actually ships; set
+          # secrets.REGISTRY_USER / REGISTRY_TOKEN to make the push stick.
           docker push "$IMG" || echo "::notice:: registry push skipped (no package-write token) — deployed from local image"
-          # Secrets follow the homelab convention: host env-file on .88, never in
-          # CI config. Read /mnt/data/wayfinder.env through the freshly built
-          # image (docker socket is the host's), extract only the key we need.
-          # Pull the WHOLE host env-file (TomTom key + WAYFINDER_* feature flags)
-          # into the runner via the docker socket, then pass all of it to the
-          # container so the feature gate (docker-entrypoint.sh) sees the flags.
-          # Falls back to an empty file so --env-file never errors on a fresh host.
-          docker run --rm --entrypoint cat -v /mnt/data/wayfinder.env:/e:ro "$IMG" /e > /tmp/wayfinder.env 2>/dev/null || : > /tmp/wayfinder.env
-          # Refresh the Nomad dashboard tile container (same name + port 8442).
-          docker rm -f nomad_custom_maps_directions 2>/dev/null || true
-          docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 \
+          # Runtime secrets/config live in a host env-file, never in CI. If
+          # ENV_FILE_PATH is set, read it through the freshly built image (the
+          # docker socket is the host's) and pass it to the container so the
+          # feature gate (docker-entrypoint.sh) and nginx template see the
+          # values. Fall back to an empty file so --env-file never errors.
+          if [ -n "${ENV_FILE_PATH:-}" ]; then
+            docker run --rm --entrypoint cat -v "${ENV_FILE_PATH}:/e:ro" "$IMG" /e > /tmp/wayfinder.env 2>/dev/null || : > /tmp/wayfinder.env
+          else
+            : > /tmp/wayfinder.env
+          fi
+          # Refresh the deployed container (same name + port).
+          docker rm -f "$NAME" 2>/dev/null || true
+          docker run -d --name "$NAME" --restart unless-stopped -p "${PORT}:80" \
             --env-file /tmp/wayfinder.env "$IMG"
-          docker ps --filter name=nomad_custom_maps_directions --format 'deployed: {{.Status}} {{.Ports}}'
+          docker ps --filter "name=$NAME" --format 'deployed: {{.Status}} {{.Ports}}'

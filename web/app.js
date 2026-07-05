@@ -10,8 +10,9 @@ const OSRM = "/route";
 // Request: Failed to parse URL" in the worker, so the vector `buildings` layer,
 // hillshade, and terrain never loaded (this is why 3D buildings never appeared).
 // Raster image tiles load on the main thread, so those tolerated relative urls.
-// Make worker-loaded sources ABSOLUTE via location.origin (portable across the
-// LAN split-horizon, the public host, and the :8442 direct port).
+// Make worker-loaded sources ABSOLUTE via location.origin (portable across
+// whatever origin the app is served from — LAN, a reverse proxy, or a direct
+// host:port).
 const ORIGIN = location.origin;
 const TILE = {
   street: "/tiles/osm/{z}/{x}/{y}.png",
@@ -177,8 +178,8 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
 // HTML5 Geolocation (GPS) + DeviceOrientation (magnetometer) via the built-in
 // control: click to locate, click again to follow; the heading cone appears on
-// devices that expose orientation data. Requires the HTTPS origin
-// (maps.quasarke.net) — browsers block geolocation on plain http.
+// devices that expose orientation data. Requires a secure origin (HTTPS or
+// http://localhost) — browsers block geolocation on plain http.
 const geoCtl = new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true, timeout: 10000 },
   trackUserLocation: true,
@@ -229,8 +230,8 @@ map.on("error", (e) => {
   console.warn("[map]", msg);
 });
 
-/* ---------- deep-links (maps.quasarke.net/?…) ---------- */
-// Lets an external tool (e.g. the geo MCP server) hand the user a link that opens
+/* ---------- deep-links (/?…) ---------- */
+// Lets an external tool hand the user a link that opens
 // the map pre-loaded with a marker or a full route. Parsed inside map.on("load")
 // so the route sources/layers + the #btn-route handler already exist, and BEFORE
 // the idle→auto-geolocate fires (its `stops.length===0` guard then won't seed over
