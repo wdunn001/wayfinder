@@ -148,6 +148,11 @@
 
   <!-- MapLibre first (exposes window.maplibregl), then the classic route planner. -->
   <script src="vendor/maplibre-gl.js"></script>
+  <!-- Deployment feature config + gate: config.js sets window.WAYFINDER_CONFIG,
+       gate.js defines window.wfFeature and strips the DOM for disabled features
+       BEFORE app.js wires anything (both classic, so they run in order here). -->
+  <script src="config.js"></script>
+  <script src="gate.js"></script>
   <script src="app.js"></script>
   <!-- Geofence drawing is an ES module (Terra Draw is ESM). It reads window.nomadMap. -->
   <script type="module" src="geofence.js"></script>

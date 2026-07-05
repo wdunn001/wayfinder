@@ -812,6 +812,7 @@ async function flowFactor(route) {
   return { factor: Math.max(0.25, avg), samples }; // clamp: sampling noise can't claim >4x slowdown
 }
 async function evaluateRoutesTraffic() {
+  if (window.wfFeature && !wfFeature("traffic")) return;   // traffic off: skip /traffic-flow congestion ETA sampling
   if (!trafficEvalUsable || !currentRoutes.length) return;
   const mine = currentRoutes; // guard against a newer request replacing state
   for (const r of mine) {
@@ -1012,11 +1013,12 @@ async function synthBuffer(text) {
 }
 // Pre-fetch+decode ahead of the turn so playback at the threshold is instant.
 function primeSpeech(text) {
+  if (!window.wfFeature || !wfFeature("voice")) return null;   // voice/AI stack disabled: no /tts synth
   if (!text) return null;
   if (!ttsCache.has(text)) ttsCache.set(text, synthBuffer(text).catch((e) => { ttsCache.delete(text); throw e; }));
   return ttsCache.get(text);
 }
-function speak(text) { if (text) speakSeq([text]); }
+function speak(text) { if (!window.wfFeature || !wfFeature("voice")) return; if (text) speakSeq([text]); }
 // Play a SEQUENCE of cached phrase fragments back-to-back, gaplessly scheduled on
 // the audio timeline. Fixed fragments ("turn left", "In 500 feet,", "onto") are
 // pre-synthesized once (primeFragments); only the variable street name is ever
@@ -1698,6 +1700,7 @@ function wxEmoji(short) {
   return "🌡️";
 }
 async function updateLocalWeather(force) {
+  if (window.wfFeature && !wfFeature("weather")) return;   // weather off: no /nws point fetch / app-bar chip
   // Prefer the GPS fix; on desktop (often no GPS) fall back to the map center so
   // the chip still shows weather for wherever you're looking.
   const loc = navUserPos || [map.getCenter().lng, map.getCenter().lat];
@@ -1720,9 +1723,11 @@ async function updateLocalWeather(force) {
 }
 // Show it on load (map center until auto-locate flies to you) and refresh when
 // you pan to a new area — so the chip appears on desktop without a GPS fix too.
-if (map.loaded && map.loaded()) updateLocalWeather(true); else map.once("load", () => updateLocalWeather(true));
-setTimeout(() => updateLocalWeather(true), 3500);
-{ let wxT = null; map.on("moveend", () => { clearTimeout(wxT); wxT = setTimeout(() => updateLocalWeather(), 1500); }); }
+if (!window.wfFeature || wfFeature("weather")) {   // weather off: don't fire the auto current-conditions path
+  if (map.loaded && map.loaded()) updateLocalWeather(true); else map.once("load", () => updateLocalWeather(true));
+  setTimeout(() => updateLocalWeather(true), 3500);
+  { let wxT = null; map.on("moveend", () => { clearTimeout(wxT); wxT = setTimeout(() => updateLocalWeather(), 1500); }); }
+}
 function warnAlert(a, prefix) {
   const id = a.id || (a.properties && a.properties.id) || ((a.properties && a.properties.event) + "|" + (a.properties && a.properties.areaDesc));
   if (warnedAlerts.has(id)) return;

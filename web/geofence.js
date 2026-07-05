@@ -273,5 +273,10 @@ function boot() {
 //    eventually, even if "load" was missed); the guard dedupes.
 let booted = false;
 function start() { if (booted) return; booted = true; boot(); }
-if (map.loaded()) start();
+// Deployment gate: if geofence is disabled, never mount Terra Draw or the
+// toolbar. (This is a module — top-level `return` is illegal — so we gate the
+// boot invocation. gate.js is a classic script loaded first, so wfFeature
+// exists here.) The Layers tab + pane are already removed by gate.js.
+if (window.wfFeature && !wfFeature("geofence")) { /* geofence off — no toolbar */ }
+else if (map.loaded()) start();
 else { map.once("load", start); map.once("idle", start); }

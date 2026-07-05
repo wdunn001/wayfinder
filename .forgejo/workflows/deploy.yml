@@ -36,9 +36,13 @@ jobs:
           # Secrets follow the homelab convention: host env-file on .88, never in
           # CI config. Read /mnt/data/wayfinder.env through the freshly built
           # image (docker socket is the host's), extract only the key we need.
-          TOMTOM_API_KEY=$(docker run --rm --entrypoint cat -v /mnt/data/wayfinder.env:/e:ro "$IMG" /e 2>/dev/null | grep '^TOMTOM_API_KEY=' | cut -d= -f2- || true)
+          # Pull the WHOLE host env-file (TomTom key + WAYFINDER_* feature flags)
+          # into the runner via the docker socket, then pass all of it to the
+          # container so the feature gate (docker-entrypoint.sh) sees the flags.
+          # Falls back to an empty file so --env-file never errors on a fresh host.
+          docker run --rm --entrypoint cat -v /mnt/data/wayfinder.env:/e:ro "$IMG" /e > /tmp/wayfinder.env 2>/dev/null || : > /tmp/wayfinder.env
           # Refresh the Nomad dashboard tile container (same name + port 8442).
           docker rm -f nomad_custom_maps_directions 2>/dev/null || true
           docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 \
-            -e TOMTOM_API_KEY="${TOMTOM_API_KEY:-}" "$IMG"
+            --env-file /tmp/wayfinder.env "$IMG"
           docker ps --filter name=nomad_custom_maps_directions --format 'deployed: {{.Status}} {{.Ports}}'

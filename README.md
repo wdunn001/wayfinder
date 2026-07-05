@@ -44,6 +44,42 @@ docker build -t wayfinder .
 docker run -d --name nomad_custom_maps_directions --restart unless-stopped -p 8442:80 wayfinder
 ```
 
+## Configuration
+
+Wayfinder ships with an always-on **core** — address search (`/geocode`),
+routing (`/route`), and the street basemap — plus seven **optional** features,
+each backed by a same-origin proxy that the deployer may not have. Toggle them
+with `WAYFINDER_*` environment variables on the container; at startup the
+entrypoint regenerates `web/config.js` from them (the browser reads it before
+`app.js`, which removes the DOM for any disabled feature so nothing calls a
+backend that isn't there).
+
+Accepted truthy values: `true` / `1` / `on` / `yes` (case-insensitive). Anything
+else is `false`. If a variable is **unset**, the committed default below applies —
+features that need an API key or an AI/voice stack default **off**; offline-capable
+ones default **on**.
+
+| Env var              | Feature                         | Default | Backend it needs                              |
+| -------------------- | ------------------------------- | :-----: | --------------------------------------------- |
+| `WAYFINDER_TRAFFIC`  | Live traffic overlay + ETA      | `false` | TomTom API key (`/traffic`, `/traffic-flow`)  |
+| `WAYFINDER_POI`      | Find places                     | `false` | TomTom Search (`/poi`) + Overpass (`/overpass`) |
+| `WAYFINDER_VOICE`    | Voice search + spoken guidance  | `false` | AI/voice stack — TTS/STT/LLM (`/tts`,`/stt`,`/llm`) |
+| `WAYFINDER_WEATHER`  | NWS weather alerts + conditions | `true`  | `/nws` (US only; degrades gracefully offline) |
+| `WAYFINDER_3D`       | 3D buildings + terrain          | `true`  | vector `/martin` buildings + `/terrarium` DEM |
+| `WAYFINDER_SATELLITE`| Satellite imagery basemap       | `true`  | raster `/tiles`                               |
+| `WAYFINDER_GEOFENCE` | Terra Draw geofence layers      | `true`  | none (self-contained, `localStorage`)         |
+
+```bash
+# Example: a deployer with a TomTom key but no voice stack
+docker run -d -p 8442:80 \
+  -e WAYFINDER_TRAFFIC=true -e WAYFINDER_POI=true -e WAYFINDER_VOICE=false \
+  wayfinder
+```
+
+The committed `web/config.js` holds the same defaults, so `docker run` with no
+env (and local `python3 -m http.server` dev) behaves identically. `config.js`
+holds only booleans — no secrets.
+
 ## CI/CD
 
 `.forgejo/workflows/deploy.yml` — push to `main` on Forgejo (`:8530`) builds the
