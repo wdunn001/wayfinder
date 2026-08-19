@@ -1,6 +1,6 @@
-# Wayfinder — fully OFFLINE build. Every dependency is vendored in source
+# Wayfinder, fully OFFLINE build. Every dependency is vendored in source
 # (web/vendor/: maplibre-gl.js/.css, terra-draw.bundle.js, terradraw-control.css),
-# so this build needs NO internet — only the base image. To pull the base from a
+# so this build needs NO internet, only the base image. To pull the base from a
 # private mirror registry instead of Docker Hub, override BASE_IMAGE, e.g.:
 #   docker build --build-arg BASE_IMAGE=registry.example.com/mirror/nginx:1.27-alpine .
 # To regenerate the vendored artifacts (version bumps), run scripts/build-vendor.sh
@@ -12,7 +12,7 @@ COPY web/ /usr/share/nginx/html/
 # nginx.conf is an envsubst template: the base image's entrypoint renders it to
 # conf.d/default.conf at startup, substituting every ${VAR} that is defined in
 # the environment (the *_UPSTREAM backend hosts, the TomTom key/referer, the NWS
-# contact) — so no backend host or key is ever baked into the image or shipped
+# contact), so no backend host or key is ever baked into the image or shipped
 # to the browser. See .env.example for the full list.
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 
@@ -37,7 +37,7 @@ ENV TOMTOM_API_KEY="" \
 
 # Feature gating: regenerate web/config.js from WAYFINDER_* env vars at start.
 # Installed as an nginx entrypoint.d HOOK (not a replacement ENTRYPOINT) so the
-# base image's own entrypoint still runs its envsubst template step above — the
+# base image's own entrypoint still runs its envsubst template step above. The
 # nginx.conf ${TOMTOM_API_KEY} render must keep working. The `40-` prefix orders
 # it after nginx's built-in `20-envsubst-on-templates.sh`, before nginx starts.
 COPY docker-entrypoint.sh /docker-entrypoint.d/40-wayfinder-config.sh

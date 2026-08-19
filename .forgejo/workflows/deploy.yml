@@ -1,4 +1,4 @@
-# Wayfinder CI/CD (Forgejo) — build the offline nginx image (MapLibre + Terra
+# Wayfinder CI/CD (Forgejo), build the offline nginx image (MapLibre + Terra
 # Draw are vendored in-repo) and (re)deploy the container. Designed for a runner
 # that runs ON the deploy host with access to the Docker socket, so build +
 # deploy are both local (no SSH). Inline `run:` only (some runners can't resolve
@@ -6,15 +6,15 @@
 #
 # All site-specific values come from Forgejo Actions variables/secrets so nothing
 # host-specific is committed. Set these in the repo/org settings before first run:
-#   vars.REGISTRY        — registry host:port that also serves this Forgejo repo
+#   vars.REGISTRY, registry host:port that also serves this Forgejo repo
 #                          over HTTP (e.g. registry.example.com:3000)
-#   vars.CONTAINER_NAME  — name for the deployed container (e.g. wayfinder)
-#   vars.HOST_PORT       — published host port (optional; defaults to 8442)
-#   vars.ENV_FILE_PATH   — path on the deploy host to the runtime env-file
+#   vars.CONTAINER_NAME, name for the deployed container (e.g. wayfinder)
+#   vars.HOST_PORT, published host port (optional; defaults to 8442)
+#   vars.ENV_FILE_PATH, path on the deploy host to the runtime env-file
 #                          (TOMTOM_API_KEY + *_UPSTREAM + WAYFINDER_* flags);
-#                          this file is NEVER committed. Optional — deploy still
+#                          this file is NEVER committed. Optional, deploy still
 #                          works (all features fall back to defaults) if unset.
-#   secrets.REGISTRY_USER / secrets.REGISTRY_TOKEN — registry push credentials
+#   secrets.REGISTRY_USER / secrets.REGISTRY_TOKEN, registry push credentials
 #                          (optional; falls back to the job token).
 name: deploy-wayfinder
 on:
@@ -54,7 +54,7 @@ jobs:
           # package-write on the org namespace. Build + deploy are on the same
           # host, so the local image is what actually ships; set
           # secrets.REGISTRY_USER / REGISTRY_TOKEN to make the push stick.
-          docker push "$IMG" || echo "::notice:: registry push skipped (no package-write token) — deployed from local image"
+          docker push "$IMG" || echo "::notice:: registry push skipped (no package-write token), deployed from local image"
           # Runtime secrets/config live in a host env-file, never in CI. If
           # ENV_FILE_PATH is set, read it through the freshly built image (the
           # docker socket is the host's) and pass it to the container so the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/build-vendor.sh — regenerate the vendored frontend dependencies in
+# scripts/build-vendor.sh, regenerate the vendored frontend dependencies in
 # web/vendor/ (run ON A BOX WITH INTERNET, then commit the result; the image
 # build itself is fully offline).
 #
@@ -38,7 +38,7 @@ docker run --rm -v "$OUT":/out node:20-alpine sh -euc "
   wget -qO /out/maplibre-gl.css https://unpkg.com/maplibre-gl@${MAPLIBRE_VER}/dist/maplibre-gl.css
   # Glyphs for text layers (measure labels). Style: glyphs=/vendor/fonts/{fontstack}/{range}.pbf
   # Source = Protomaps basemaps-assets (matches the Protomaps planet basemap).
-  # NOTE: fonts.openmaptiles.org is DEAD — it returns a 2725-byte HTML page with
+  # NOTE: fonts.openmaptiles.org is DEAD. It returns a 2725-byte HTML page with
   # HTTP 200, so wget silently saved HTML as .pbf and MapLibre flooded
   # "Unimplemented type: 4". Always spot-check a glyph is a real pbf (not "<").
   mkdir -p '/out/fonts/Noto Sans Regular'
@@ -49,4 +49,4 @@ docker run --rm -v "$OUT":/out node:20-alpine sh -euc "
   done
   ls -la /out
 "
-echo "vendored — commit web/vendor/ to keep the offline build current"
+echo "vendored. Commit web/vendor/ to keep the offline build current"

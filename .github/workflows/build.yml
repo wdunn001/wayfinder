@@ -1,4 +1,4 @@
-# Public CI — build the Wayfinder Docker image on every push / PR to verify it
+# Public CI, build the Wayfinder Docker image on every push / PR to verify it
 # compiles cleanly. Build only; no registry push and no deploy (this repo carries
 # no deployment secrets). Self-hosters can layer their own deploy on top.
 name: build

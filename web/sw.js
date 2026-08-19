@@ -1,12 +1,12 @@
-/* Wayfinder service worker — offline-capable PWA.
+/* Wayfinder service worker, offline-capable PWA.
  *
  * Strategy (deliberately deploy-safe):
  *  - App shell + vendor (js/css/html/fonts/icons): NETWORK-FIRST with cache
- *    fallback — online users always get the freshly deployed code (keeps the
+ *    fallback, online users always get the freshly deployed code (keeps the
  *    Cache-Control: no-cache deploy semantics), offline users get last-good.
  *  - Basemap/vector tiles (/tiles/, /martin/): network-first + cache fallback
- *    in a separate cache — previously viewed areas keep working offline.
- *  - Live data (/traffic*, /geocode/, /nominatim/, /route/): NETWORK-ONLY —
+ *    in a separate cache, previously viewed areas keep working offline.
+ *  - Live data (/traffic*, /geocode/, /nominatim/, /route/): NETWORK-ONLY,
  *    stale traffic/routing is worse than none; the app already degrades.
  */
 const SHELL_CACHE = "wf-shell-v29";

@@ -1,4 +1,4 @@
-/* Deployment feature gate — runs AFTER config.js, BEFORE app.js (both classic
+/* Deployment feature gate, runs AFTER config.js, BEFORE app.js (both classic
  * scripts, so this executes with the header/panel DOM already parsed above it).
  * A feature is ON unless config.js explicitly set it to `false` (default-on for
  * anything unspecified). For each DISABLED feature we simply REMOVE its DOM up

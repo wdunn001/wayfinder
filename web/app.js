@@ -1,4 +1,4 @@
-/* Wayfinder — offline maps & directions.
+/* Wayfinder, offline maps & directions.
  * Backends are proxied same-origin by the app's nginx:
  *   /geocode -> Photon   /route -> OSRM (route + trip)   /tiles -> tilecache
  * Route-planning model ported from mass-zero-fpv fleet maps (drone bits removed). */
@@ -6,12 +6,12 @@
 const GEOCODE = "/geocode";
 const OSRM = "/route";
 // VECTOR + raster-DEM tiles are fetched inside MapLibre's Web Worker, which has
-// no document base — a RELATIVE url ("/martin/…") throws "Failed to construct
+// no document base. A RELATIVE url ("/martin/…") throws "Failed to construct
 // Request: Failed to parse URL" in the worker, so the vector `buildings` layer,
 // hillshade, and terrain never loaded (this is why 3D buildings never appeared).
 // Raster image tiles load on the main thread, so those tolerated relative urls.
 // Make worker-loaded sources ABSOLUTE via location.origin (portable across
-// whatever origin the app is served from — LAN, a reverse proxy, or a direct
+// whatever origin the app is served from, LAN, a reverse proxy, or a direct
 // host:port).
 const ORIGIN = location.origin;
 const TILE = {
@@ -61,11 +61,11 @@ function parseBatchAddresses(input, max = 200) {
   return { addresses: out, truncated: false };
 }
 function fmtDist(m) {
-  if (!Number.isFinite(m) || m < 0) return "—";
+  if (!Number.isFinite(m) || m < 0) return "-";
   return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m / 1000 < 10 ? 1 : 0)} km`;
 }
 function fmtDur(s) {
-  if (!Number.isFinite(s) || s < 0) return "—";
+  if (!Number.isFinite(s) || s < 0) return "-";
   s = Math.round(s);
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60), r = s % 60;
@@ -77,7 +77,7 @@ function fmtDur(s) {
  * Nominatim (self-hosted US + TIGER) resolves real street addresses with house
  * numbers; Photon covers place names and acts as the fallback. If Nominatim is
  * down/not-yet-imported the chain degrades automatically and retries every 5
- * minutes — the cutover to TIGER happens by itself the moment it serves. */
+ * minutes. The cutover to TIGER happens by itself the moment it serves. */
 let nominatimUp = true;
 let nominatimRetryAt = 0;
 function nomToStop(r) {
@@ -98,7 +98,7 @@ async function geocodeForward(q, limit) {
         const j = await r.json();
         nominatimUp = true;
         if (Array.isArray(j) && j.length) return j.map(nomToStop);
-        // empty result: fall through — Photon may still match fuzzy place names
+        // empty result: fall through, Photon may still match fuzzy place names
       } else { nominatimUp = false; nominatimRetryAt = now + 300000; }
     } catch { nominatimUp = false; nominatimRetryAt = now + 300000; }
   }
@@ -150,14 +150,14 @@ const map = new maplibregl.Map({
     version: 8,
     // Self-hosted glyphs (vendored pbf ranges): any layer using text-field
     // (e.g. the measure control's labels) hard-requires a style `glyphs`
-    // endpoint — without it addLayer throws and the whole draw control dies.
+    // endpoint. Without it addLayer throws and the whole draw control dies.
     glyphs: "/vendor/fonts/{fontstack}/{range}.pbf",
     sources: {
       street: { type: "raster", tiles: [TILE.street], tileSize: 256, maxzoom: 19,
         attribution: '&copy; OpenStreetMap contributors (self-hosted)' },
       satellite: { type: "raster", tiles: [TILE.satellite], tileSize: 256, maxzoom: 18,
         attribution: "Tiles &copy; Esri (self-hosted cache)" },
-      // Self-hosted Martin planet vector tiles — its `buildings` source-layer carries
+      // Self-hosted Martin planet vector tiles. Its `buildings` source-layer carries
       // height/min_height, used by the 3D fill-extrusion layer below.
       "mz-vector": { type: "vector", tiles: [TILE.vector], minzoom: 0, maxzoom: 15,
         attribution: "&copy; OpenStreetMap, Protomaps (self-hosted)" },
@@ -179,7 +179,7 @@ map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bott
 // HTML5 Geolocation (GPS) + DeviceOrientation (magnetometer) via the built-in
 // control: click to locate, click again to follow; the heading cone appears on
 // devices that expose orientation data. Requires a secure origin (HTTPS or
-// http://localhost) — browsers block geolocation on plain http.
+// http://localhost). Browsers block geolocation on plain http.
 const geoCtl = new maplibregl.GeolocateControl({
   positionOptions: { enableHighAccuracy: true, timeout: 10000 },
   trackUserLocation: true,
@@ -188,13 +188,13 @@ const geoCtl = new maplibregl.GeolocateControl({
   showUserHeading: true,
 });
 map.addControl(geoCtl, "bottom-right");
-// Surface geolocation failures visibly — silent failure looks like "it never
+// Surface geolocation failures visibly. Silent failure looks like "it never
 // asked". PERMISSION_DENIED (1) also fires when the browser treats the origin
 // as insecure (e.g. an untrusted internal CA cert on the LAN side).
 geoCtl.on("error", (e) => {
   const code = e && e.code;
   showError(code === 1
-    ? "Location blocked: allow it in site settings — and check the padlock; an untrusted cert disables geolocation."
+    ? "Location blocked: allow it in site settings, and check the padlock; an untrusted cert disables geolocation."
     : `Location unavailable (${(e && e.message) || "GPS error"}).`);
 });
 // Every position fix: clear stale errors, remember the position for turn-by-turn
@@ -221,7 +221,7 @@ map.addControl(new maplibregl.ScaleControl({ unit: "imperial" }), "bottom-left")
 // Exposed for the geofence-layers ES module (geofence.js), which owns drawing + persistence.
 window.nomadMap = map;
 
-// Without an error listener MapLibre console.errors EVERY internal error event —
+// Without an error listener MapLibre console.errors EVERY internal error event,
 // including the benign AbortErrors from tiles cancelled mid pan/zoom, which
 // floods the console with bare "Error" lines. Swallow aborts, surface the rest.
 map.on("error", (e) => {
@@ -304,12 +304,12 @@ map.on("load", () => {
   map.on("mouseenter", "route-alts", () => { map.getCanvas().style.cursor = "pointer"; });
   map.on("mouseleave", "route-alts", () => { map.getCanvas().style.cursor = ""; });
 
-  // Hillshade relief from the real terrarium DEM (z0-15) — hidden until 3D is on.
-  // Uses its own DEM source (mz-terrain-hs) — never share with setTerrain.
+  // Hillshade relief from the real terrarium DEM (z0-15), hidden until 3D is on.
+  // Uses its own DEM source (mz-terrain-hs), never share with setTerrain.
   map.addLayer({ id: "hillshade", type: "hillshade", source: "mz-terrain-hs",
     layout: { visibility: "none" }, paint: { "hillshade-exaggeration": 0.45 } }, "route-line");
 
-  // 3D building extrusions from Martin's planet `buildings` layer — hidden until 3D is on.
+  // 3D building extrusions from Martin's planet `buildings` layer, hidden until 3D is on.
   // Inserted beneath route-line so routes stay visible over the buildings.
   map.addLayer({
     id: "buildings-3d",
@@ -317,7 +317,7 @@ map.on("load", () => {
     source: "mz-vector",
     "source-layer": "buildings",
     // The planet tileset carries `buildings` from z11 (see /martin/planet
-    // tilejson) — gate the extrusions to match so 3D shows at city zooms,
+    // tilejson). Gate the extrusions to match so 3D shows at city zooms,
     // not only when zoomed all the way in.
     minzoom: 11,
     layout: { visibility: "none" },
@@ -380,13 +380,13 @@ async function setTraffic(on) {
       if (!r.ok) {
         showError(r.status === 401 || r.status === 403
           ? "Traffic needs a TomTom API key on the server (set TOMTOM_API_KEY on the container)."
-          : `Traffic tiles unavailable (HTTP ${r.status}) — is the box online?`);
+          : `Traffic tiles unavailable (HTTP ${r.status}). Is the box online?`);
         return;
       }
       trafficProbed = true;
       clearError();
     } catch {
-      showError("Traffic tiles unreachable — the traffic overlay needs internet access.");
+      showError("Traffic tiles unreachable. The traffic overlay needs internet access.");
       return;
     }
   }
@@ -405,7 +405,7 @@ function setAddStop(on) {
   addStopArmed = on;
   if (btnAddStop) {
     btnAddStop.classList.toggle("active", on);
-    btnAddStop.textContent = on ? "Click the map to add stops — press to finish" : "+ Add stop on map";
+    btnAddStop.textContent = on ? "Click the map to add stops, press to finish" : "+ Add stop on map";
   }
   map.getCanvas().style.cursor = on ? "crosshair" : "";
 }
@@ -414,7 +414,7 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") setAddStop
 
 map.on("click", async (e) => {
   // When the geofence tools are active (drawing/deleting), map clicks belong to
-  // the draw layer — don't also drop a route stop.
+  // the draw layer. Don't also drop a route stop.
   if (window.nomadDrawActive) return;
   // Stops are only added while the Add-stop button is armed.
   if (!addStopArmed) return;
@@ -667,7 +667,7 @@ function haversine(a, b) {
 const cardinal = (bearing) =>
   ["north","northeast","east","southeast","south","southwest","west","northwest"][Math.round(((bearing || 0) % 360) / 45) % 8];
 
-// Compact arrow glyphs (render everywhere — no icon font needed offline).
+// Compact arrow glyphs (render everywhere, no icon font needed offline).
 function maneuverIcon(st) {
   const m = st.maneuver || {}, mod = m.modifier || "";
   if (m.type === "arrive") return "⚑";
@@ -682,7 +682,7 @@ function maneuverIcon(st) {
   if (mod === "right") return "→";
   return "↑";
 }
-// OSRM returns maneuver type/modifier + road name, NOT prose — build the text.
+// OSRM returns maneuver type/modifier + road name, NOT prose. Build the text.
 function stepInstruction(st) {
   const m = st.maneuver || {}, road = (st.name || "").trim();
   const mod = m.modifier || "", onto = road ? ` onto ${road}` : "", on = road ? ` on ${road}` : "";
@@ -773,7 +773,7 @@ async function setOrigin(lng, lat, fly = true) {
 if (btnMyLoc) btnMyLoc.addEventListener("click", async () => {
   btnMyLoc.classList.add("busy");
   try { const [lng, lat] = await currentPosition(); await setOrigin(lng, lat); }
-  catch { showError("Couldn't get your location — allow location access (needs the HTTPS site)."); }
+  catch { showError("Couldn't get your location. Allow location access (needs the HTTPS site)."); }
   finally { btnMyLoc.classList.remove("busy"); }
 });
 
@@ -796,7 +796,7 @@ async function flowFactor(route) {
   const samples = [];
   for (const { coord: [lng, lat], idx } of pts) {
     try {
-      // Hard 4s budget per sample — a dead/slow TomTom degrades in seconds,
+      // Hard 4s budget per sample, a dead/slow TomTom degrades in seconds,
       // never stalls background evaluation for minutes.
       const r = await fetch(`/traffic-flow/${lat.toFixed(3)},${lng.toFixed(3)}`,
         { signal: AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined });
@@ -867,7 +867,7 @@ function showRouteSummary() {
   if (best !== selectedRouteIdx) {
     const saves = (currentRoutes[selectedRouteIdx]._adjusted ?? currentRoutes[selectedRouteIdx].duration)
                 - (currentRoutes[best]._adjusted ?? currentRoutes[best].duration);
-    if (saves > 60) html += `<button class="alt-suggest" data-idx="${best}">🚦 Alternative saves ${fmtDur(Math.round(saves))} — switch</button>`;
+    if (saves > 60) html += `<button class="alt-suggest" data-idx="${best}">🚦 Alternative saves ${fmtDur(Math.round(saves))}, switch</button>`;
   }
   el.innerHTML = html;
   const btn = el.querySelector(".alt-suggest");
@@ -909,7 +909,7 @@ function hideSummary() {
   updateDrawerLauncher();
 }
 function showError(msg) { const e = document.getElementById("error"); e.classList.remove("info"); e.textContent = msg; e.classList.remove("hidden"); }
-// Self-dismissing blue notification (weather/traffic alerts) — survives the
+// Self-dismissing blue notification (weather/traffic alerts), survives the
 // per-GPS-fix clearError (it's .info) and won't stomp an active confirm/countdown.
 function notify(msg) {
   const e = document.getElementById("error");
@@ -918,7 +918,7 @@ function notify(msg) {
   clearTimeout(notify._t); notify._t = setTimeout(() => { if (!e.querySelector(".cfm")) { e.classList.add("hidden"); e.classList.remove("info"); e.textContent = ""; } }, 8000);
 }
 // Don't clear an active prompt (confirm .cfm / faster-route countdown / a live
-// .info notification) — only transient errors.
+// .info notification), only transient errors.
 function clearError() { const e = document.getElementById("error"); if (e.querySelector(".cfm") || e.classList.contains("info")) return; e.classList.add("hidden"); }
 function escapeHtml(s) { return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
@@ -1023,7 +1023,7 @@ function speak(text) { if (!window.wfFeature || !wfFeature("voice")) return; if 
 // Play a SEQUENCE of cached phrase fragments back-to-back, gaplessly scheduled on
 // the audio timeline. Fixed fragments ("turn left", "In 500 feet,", "onto") are
 // pre-synthesized once (primeFragments); only the variable street name is ever
-// newly synthesized — so we don't re-generate whole sentences with AI each time.
+// newly synthesized, so we don't re-generate whole sentences with AI each time.
 function speakSeq(parts) {
   if (voiceMuted || !parts || !parts.length) return;
   speakChain = speakChain.then(async () => {
@@ -1040,7 +1040,7 @@ function speakSeq(parts) {
     } catch { /* voice is best-effort */ }
   });
 }
-// Fixed phrase fragments — pre-synthesized on nav start so every prompt is a
+// Fixed phrase fragments, pre-synthesized on nav start so every prompt is a
 // cache hit at play time (street names are cached on approach separately).
 const FRAG_DIST = ["In 1 mile,", "In half a mile,", "In 500 feet,", "In 300 feet,"];
 const FRAG_CORE = { left: "turn left", right: "turn right", "slight-left": "keep left", "slight-right": "keep right",
@@ -1098,7 +1098,7 @@ async function toggleMic(btn) {
     startDing();
     mediaRec.start(); btn.classList.add("recording");
     setTimeout(() => { if (mediaRec && mediaRec.state === "recording") mediaRec.stop(); }, 6000); // safety auto-stop
-  } catch { showError("Microphone unavailable — allow mic access (needs the HTTPS site)."); }
+  } catch { showError("Microphone unavailable. Allow mic access (needs the HTTPS site)."); }
 }
 async function transcribeAndSearch(blob) {
   try {
@@ -1106,7 +1106,7 @@ async function transcribeAndSearch(blob) {
     const r = await fetch("/stt?task=transcribe&output=json&language=en", { method: "POST", body: fd });
     const j = await r.json();
     const text = (j.text || "").trim();
-    if (!text) { showError("Didn't catch that — try again."); return; }
+    if (!text) { showError("Didn't catch that. Try again."); return; }
     const input = document.getElementById("search-input"); if (input) input.value = text;
     await handleVoiceCommand(text, await parseVoiceCommand(text));
   } catch { showError("Voice search failed."); }
@@ -1145,7 +1145,7 @@ async function parseVoiceCommand(text) {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 4500);
     const prompt = `Parse this map/navigation request. Reply with JSON only.\n` +
       `Fields: "action" one of: "add" (add a stop ALONG/ON the current route while continuing e.g. add gas, find X along the route), ` +
-      `"navigate" (a new destination — take me to, drive to, get directions to X), else "search" (just find/show), ` +
+      `"navigate" (a new destination, take me to, drive to, get directions to X), else "search" (just find/show), ` +
       `"category" (one of fuel,food,coffee,ev,grocery,pharmacy,atm,hotel,parking,hospital for a generic place type, else null), ` +
       `"query" (specific place/cuisine/name or address if not a category, else null), ` +
       `"nearest" (true if nearest/closest/near me), "along_route" (true if on my way/along the route).\n` +
@@ -1228,7 +1228,7 @@ async function handleVoiceCommand(text, cmd) {
     await runPlaceSearch({ cat: cmd.category, along });
     const kind = catOf(cmd.category).label.split(" ")[1].toLowerCase();
     if (!placesResults.length) { speak(`I couldn't find any ${kind} ${along ? "along your route" : "nearby"}.`); return; }
-    // While navigating, a category ask just SHOWS options on the route — the
+    // While navigating, a category ask just SHOWS options on the route. The
     // user taps "Add" to drop it in as a waypoint (no silent route change).
     if (navMode) { speak(`Found ${placesResults.length} ${kind} along your route. Tap Add to stop at one.`); return; }
     if (navigate) { speak(`Getting directions to ${placesResults[0].name}.`); routeToPoint(placesResults[0]); }
@@ -1263,7 +1263,7 @@ function schedulePrompts() {
   const isLast = navIdx === currentSteps.length - 1;
   // A very short leg after this maneuver means the NEXT turn comes immediately.
   const chained = !isLast && st.dist > 0 && st.dist < 160 && !!currentSteps[navIdx + 1];
-  // Pre-cache only the street name(s) on approach — the fixed fragments are
+  // Pre-cache only the street name(s) on approach. The fixed fragments are
   // already primed (primeFragments on nav start), so nothing else needs synth.
   if (d < 2100 && !promptFired.primed) {
     promptFired.primed = true;
@@ -1299,7 +1299,7 @@ function navTick() {
     const maxLead = navLastFixS + navSpeed * 1.6 + 8;
     navS += (Math.min(predicted, maxLead) - navS) * 0.18;
   } else {
-    // Stationary: settle onto the last fix — no forward creep while still.
+    // Stationary: settle onto the last fix, no forward creep while still.
     navS += (navLastFixS - navS) * 0.25;
     if (Math.abs(navS - navLastFixS) < 0.5) navS = navLastFixS;
   }
@@ -1329,7 +1329,7 @@ function recenter() {
 function toggleFollowLock(btn) {
   followLocked = !followLocked;
   btn.textContent = followLocked ? "🔒" : "🔓";
-  btn.title = followLocked ? "Follow locked — tap to unlock" : "Lock follow (ignore accidental pans)";
+  btn.title = followLocked ? "Follow locked, tap to unlock" : "Lock follow (ignore accidental pans)";
   btn.classList.toggle("locked", followLocked);
   if (followLocked) recenter();   // locking re-engages follow immediately
 }
@@ -1369,7 +1369,7 @@ async function startNav() {
   const seed = navUserPos ? projectToRoute(navUserPos) : null;
   navS = seed ? seed.s : 0; navLastFixS = navS; navHeading = seed ? seed.bearing : 0; navLastFixT = performance.now();
   // jumpTo (instant), NOT easeTo: the follow loop's per-frame jumpTo omits zoom,
-  // so an animated easeTo gets interrupted and the zoom never lands — leaving the
+  // so an animated easeTo gets interrupted and the zoom never lands, leaving the
   // far-out route-overview zoom. Snap to a close nav zoom; the loop preserves it.
   try { map.jumpTo({ zoom: 18.5, pitch: is3D ? 60 : 0 }); } catch { /* map not ready */ }
   acquireWakeLock();
@@ -1415,7 +1415,7 @@ async function reroute() {
   await liveReroute([[dest.lng, dest.lat]], "Rerouting.");
 }
 // Add a place as a WAYPOINT on the current drive (before the final destination)
-// and reroute live — so "find gas along the route" → Add doesn't abandon the trip.
+// and reroute live, so "find gas along the route" → Add doesn't abandon the trip.
 async function addWaypointLive(p) {
   const dest = stops[stops.length - 1]; if (!dest) return;
   stops.splice(Math.max(1, stops.length - 1), 0, { localId: newId(), lat: p.lat, lng: p.lng, label: p.name || p.label });
@@ -1467,7 +1467,7 @@ function maneuverSvg(kind) {
   return wrap(P[kind] || P.straight);
 }
 
-/* ---------- header (app bar) — idle / route-planned / navigating ---------- */
+/* ---------- header (app bar), idle / route-planned / navigating ---------- */
 const clockAfter = (ms) => new Date(Date.now() + ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 function computeRemaining() {
   const sel = currentRoutes[selectedRouteIdx];
@@ -1543,7 +1543,7 @@ function updateDrawerLauncher() { updateHeader(); }
     panel.classList.toggle("collapsed", collapsed);
     document.body.classList.toggle("drawer-open", !collapsed);   // desktop CSS pushes #map right
     collapseBtn && collapseBtn.setAttribute("aria-expanded", String(!collapsed));
-    // The map container width changes when it's pushed — let MapLibre re-fit after the slide.
+    // The map container width changes when it's pushed. Let MapLibre re-fit after the slide.
     setTimeout(() => { try { window.nomadMap && window.nomadMap.resize(); } catch { /* not ready */ } }, 280);
     if (persist) { try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch { /* private mode */ } }
   }
@@ -1583,7 +1583,7 @@ async function navTrafficCheck() {
     const fastest = cands.reduce((b, rt) => ((rt._adjusted ?? rt.duration) < (b._adjusted ?? b.duration) ? rt : b), cur);
     const save = (cur._adjusted ?? cur.duration) - (fastest._adjusted ?? fastest.duration);
     if (fastest !== cur && save > 120) proposeFasterRoute(fastest, Math.round(save));   // saves > 2 min
-  } catch { /* OSRM/traffic hiccup — try again next tick */ }
+  } catch { /* OSRM/traffic hiccup, try again next tick */ }
 }
 function proposeFasterRoute(rt, saveSecs) {
   fasterPromptActive = true;
@@ -1591,7 +1591,7 @@ function proposeFasterRoute(rt, saveSecs) {
   speak(`There's a faster route, saving ${mins}.`);
   let secs = 10;
   const e = document.getElementById("error"); e.classList.add("info");
-  e.innerHTML = `🚦 Faster route — saves ${mins}. Switching in <span id="fr-count">${secs}</span>s ` +
+  e.innerHTML = `🚦 Faster route, saves ${mins}. Switching in <span id="fr-count">${secs}</span>s ` +
     `<span class="cfm"><button id="fr-yes" class="cfm-y">Switch now</button><button id="fr-no" class="cfm-n">Keep</button></span>`;
   e.classList.remove("hidden");
   const doSwitch = () => { clearFaster(); switchToRoute(rt); };
@@ -1652,7 +1652,7 @@ async function fetchAlerts() {
     if (map.getSource("nws-alerts")) map.getSource("nws-alerts").setData({ type: "FeatureCollection", features: nwsAlerts });
     checkRouteWeather();
     if (navMode) checkPositionWeather();
-  } catch { /* NWS unreachable / offline — silent */ }
+  } catch { /* NWS unreachable / offline, silent */ }
 }
 function ensureAlertFeed() {
   ensureWeatherLayers();
@@ -1723,7 +1723,7 @@ async function updateLocalWeather(force) {
   } catch { /* NWS point forecast unavailable */ }
 }
 // Show it on load (map center until auto-locate flies to you) and refresh when
-// you pan to a new area — so the chip appears on desktop without a GPS fix too.
+// you pan to a new area, so the chip appears on desktop without a GPS fix too.
 if (!window.wfFeature || wfFeature("weather")) {   // weather off: don't fire the auto current-conditions path
   if (map.loaded && map.loaded()) updateLocalWeather(true); else map.once("load", () => updateLocalWeather(true));
   setTimeout(() => updateLocalWeather(true), 3500);
@@ -1886,7 +1886,7 @@ async function runPlaceSearch({ cat, query, along }) {
   if (res.length && !useAlong) framePlaces(res, origin);
 }
 // Bring the result pins into view. fitBounds throws when the padding exceeds a
-// narrow (mobile) canvas — which leaves the pins off-screen — so pad
+// narrow (mobile) canvas, which leaves the pins off-screen, so pad
 // proportionally and fall back to easing to the first result.
 function framePlaces(res, origin) {
   try {
@@ -1902,7 +1902,7 @@ function framePlaces(res, origin) {
 }
 // Category chip → along-route while navigating, else near you.
 function findPlaces(cat) { return runPlaceSearch({ cat, along: navMode }); }
-// Free-text place search from the search box ("gas", "coffee", "walmart") — near
+// Free-text place search from the search box ("gas", "coffee", "walmart"), near
 // a point, or along the route ahead. Renders the same pins + picklist as chips.
 async function tomtomSearchAt(query, center, radius) {
   const r = await fetch(`/poi-search/${encodeURIComponent(query)}.json?lat=${center[1].toFixed(5)}&lon=${center[0].toFixed(5)}&radius=${radius}&limit=20`);
@@ -1975,7 +1975,7 @@ function directionsToPlace(i) {
   requestRouteTo(r);
 }
 // Route to a point, but if we're mid-navigation, CONFIRM first (a new route
-// abandons the current drive) — voice/taps can't silently stop navigation.
+// abandons the current drive). Voice/taps can't silently stop navigation.
 function requestRouteTo(p) {
   if (navMode) {
     const label = p.name || p.label || "there";

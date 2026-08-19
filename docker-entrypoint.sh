@@ -4,7 +4,7 @@
 #
 # Installed as an nginx entrypoint.d hook (/docker-entrypoint.d/40-wayfinder-
 # config.sh). The nginx base image's own entrypoint runs every *.sh in that
-# dir BEFORE starting nginx and AFTER its envsubst template step — so this
+# dir BEFORE starting nginx and AFTER its envsubst template step, so this
 # preserves the existing nginx.conf template rendering (TOMTOM_API_KEY). When
 # invoked as a hook there are no args, so it just writes config.js and returns;
 # if invoked directly with a command it execs it (works as a full entrypoint too).

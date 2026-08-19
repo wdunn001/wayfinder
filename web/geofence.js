@@ -1,4 +1,4 @@
-/* Geofence layers — full Terra Draw toolset via @watergis/maplibre-gl-terradraw
+/* Geofence layers, full Terra Draw toolset via @watergis/maplibre-gl-terradraw
  * (the terradraw.water-gis.com control): point/marker, line, polygon, rectangle,
  * circle, freehand, angled-rectangle, sector, sensor, select/edit, delete,
  * download, plus distance/area measurement labels.
@@ -9,7 +9,7 @@
  * layer's id, and any change persists the snapshot to localStorage grouped by
  * that stamp. Hidden layers are pulled out of the store but kept in the model.
  * Per-layer GeoJSON export/import keeps everything portable. */
-import { MaplibreMeasureControl } from "./vendor/terra-draw.bundle.js"; // .js not .mjs — nginx serves .mjs as octet-stream
+import { MaplibreMeasureControl } from "./vendor/terra-draw.bundle.js"; // .js not .mjs, nginx serves .mjs as octet-stream
 
 const map = window.nomadMap;
 const LS_KEY = "nomad-geofence-layers-v1"; // schema unchanged from v1 (features gain properties.mode)
@@ -41,7 +41,7 @@ const newUuid = () => (crypto.randomUUID ? crypto.randomUUID()
       const r = (Math.random() * 16) | 0; return (c === "x" ? r : (r & 3) | 8).toString(16);
     }));
 function toTdFeature(f, layerId) {
-  // Terra Draw v1 validates feature ids as UUID4 — shapes saved by the old
+  // Terra Draw v1 validates feature ids as UUID4. Shapes saved by the old
   // hand-rolled toolbar carry short random ids, which made restore throw.
   // Re-id those (persist() writes the new uuid back via String(f.id)).
   const id = isUuid(f.properties?._uid) ? f.properties._uid : newUuid();
@@ -55,7 +55,7 @@ function toTdFeature(f, layerId) {
 
 /* ---------- the control (all modes + measurement) ---------- */
 const control = new MaplibreMeasureControl({ open: true }); // no `modes` -> every mode the plugin ships
-// NOTE: addControl happens in boot() — the measure control adds map sources in
+// NOTE: addControl happens in boot(). The measure control adds map sources in
 // onAdd, which throws "Style is not done loading" if run before the style loads.
 let td = null;              // TerraDraw instance
 let suppressPersist = false; // guard while we add/remove features programmatically
@@ -157,7 +157,7 @@ function initTabs() {
       const which = t.dataset.tab;
       document.getElementById("tab-directions").classList.toggle("hidden", which !== "directions");
       document.getElementById("tab-layers").classList.toggle("hidden", which !== "layers");
-      // The Terra Draw control (top-right) belongs to the Layers tab only —
+      // The Terra Draw control (top-right) belongs to the Layers tab only.
       // CSS hides it via this body class, and leaving the tab disarms any
       // active draw mode so hidden tools can't keep capturing map clicks.
       document.body.classList.toggle("layers-tab", which === "layers");
@@ -253,7 +253,7 @@ function fitTo(feats) {
 
 /* ---------- boot ---------- */
 function boot() {
-  // The draw control can fail (e.g. style/glyph issues) — never let that take
+  // The draw control can fail (e.g. style/glyph issues). Never let that take
   // down the tabs + layers panel with it.
   try {
     map.addControl(control, "top-right"); // top-left is occupied by the Wayfinder panel
@@ -265,7 +265,7 @@ function boot() {
 }
 // Boot gating is subtle here:
 //  * isStyleLoaded() lies (true before real load with an inline style object)
-//    — the control's onAdd then throws "Style is not done loading".
+//    - the control's onAdd then throws "Style is not done loading".
 //  * "load" is one-shot and can fire BEFORE this deferred module registers its
 //    listener (missed event -> boot never runs).
 //  * loaded() is momentary (false during tile churn) so it can't be trusted alone.
@@ -274,9 +274,9 @@ function boot() {
 let booted = false;
 function start() { if (booted) return; booted = true; boot(); }
 // Deployment gate: if geofence is disabled, never mount Terra Draw or the
-// toolbar. (This is a module — top-level `return` is illegal — so we gate the
+// toolbar. (This is a module and top-level `return` is illegal, so we gate the
 // boot invocation. gate.js is a classic script loaded first, so wfFeature
 // exists here.) The Layers tab + pane are already removed by gate.js.
-if (window.wfFeature && !wfFeature("geofence")) { /* geofence off — no toolbar */ }
+if (window.wfFeature && !wfFeature("geofence")) { /* geofence off, no toolbar */ }
 else if (map.loaded()) start();
 else { map.once("load", start); map.once("idle", start); }
